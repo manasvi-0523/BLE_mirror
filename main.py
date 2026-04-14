@@ -31,7 +31,7 @@ async def run():
     devices = await scan(duration=SCAN_DURATION)
 
     if not devices:
-        print("⚠️  No devices found. Make sure Bluetooth is enabled.")
+        print("[WARN] No devices found. Make sure Bluetooth is enabled.")
         return
 
     # ── Phase 2: Feature Extraction ───────────────────────────
@@ -41,7 +41,7 @@ async def run():
     X = get_feature_matrix(features_df)
 
     if len(X) < 2:
-        print("⚠️  Need at least 2 devices for anomaly detection. Scan again later.")
+        print("[WARN] Need at least 2 devices for anomaly detection. Scan again later.")
         return
 
     # ── Phase 3: AI Training + Prediction ─────────────────────

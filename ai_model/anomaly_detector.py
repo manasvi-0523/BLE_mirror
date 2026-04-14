@@ -28,7 +28,7 @@ def train(feature_matrix: np.ndarray, contamination: float = 0.1):
     with open(SCALER_PATH, 'wb') as f:
         pickle.dump(scaler, f)
 
-    print(f"✅ Model trained on {len(X_scaled)} device(s). Saved to {MODEL_PATH}\n")
+    print(f"[OK] Model trained on {len(X_scaled)} device(s). Saved to {MODEL_PATH}\n")
     return model, scaler
 
 def load_model():
@@ -55,7 +55,7 @@ def predict(feature_matrix: np.ndarray, model=None, scaler=None):
     return predictions, scores
 
 def label(prediction: int) -> str:
-    return "✅ NORMAL" if prediction == 1 else "🚨 ANOMALY"
+    return "NORMAL" if prediction == 1 else "ANOMALY"
 
 if __name__ == '__main__':
     # Quick test with dummy data

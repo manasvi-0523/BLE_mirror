@@ -34,7 +34,7 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     # Fill NaN std values (single scan devices)
     grouped.fillna(0, inplace=True)
 
-    print(f"✅ Features extracted for {len(grouped)} device(s).\n")
+    print(f"[OK] Features extracted for {len(grouped)} device(s).\n")
     return grouped
 
 def get_feature_matrix(df: pd.DataFrame) -> np.ndarray:

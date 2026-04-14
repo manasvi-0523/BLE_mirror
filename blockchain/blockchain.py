@@ -59,7 +59,7 @@ class Blockchain:
         )
         self.chain.append(block)
         self._save()
-        print(f"🔗 Block #{block.index} added | Device: {device_id} | Hash: {block.hash[:12]}...")
+        print(f"[CHAIN] Block #{block.index} added | Device: {device_id} | Hash: {block.hash[:12]}...")
         return block
 
     def get_device(self, device_id: str) -> Block | None:
@@ -73,12 +73,12 @@ class Blockchain:
             current = self.chain[i]
             previous = self.chain[i - 1]
             if current.previous_hash != previous.hash:
-                print(f"⚠️  Chain tampered at block {i}!")
+                print(f"[WARN] Chain tampered at block {i}!")
                 return False
             if current.hash != current.compute_hash():
-                print(f"⚠️  Block {i} hash mismatch!")
+                print(f"[WARN] Block {i} hash mismatch!")
                 return False
-        print("✅ Blockchain integrity verified.")
+        print("[OK] Blockchain integrity verified.")
         return True
 
     def _save(self):
@@ -96,7 +96,7 @@ class Blockchain:
             self.chain.append(b)
 
     def print_chain(self):
-        print("\n📦 Blockchain State:")
+        print("\n[INFO] Blockchain State:")
         for b in self.chain:
             print(f"  Block #{b.index} | Device: {b.device_id:<20} | Hash: {b.hash[:16]}...")
 

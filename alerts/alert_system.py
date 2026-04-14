@@ -33,13 +33,13 @@ def trigger(mac: str, device_name: str, prediction: int, score: float):
         writer.writerow(record)
 
     if is_anomaly:
-        print(f"\n🚨 ALERT TRIGGERED")
+        print(f"\n[ALERT] ALERT TRIGGERED")
         print(f"   Device  : {device_name} ({mac})")
         print(f"   Status  : {status}")
         print(f"   Score   : {score:.4f}")
         print(f"   Action  : {action}")
         print(f"   Time    : {record['timestamp']}\n")
     else:
-        print(f"✅ {device_name} ({mac}) — {status} | Score: {score:.4f}")
+        print(f"[OK] {device_name} ({mac}) — {status} | Score: {score:.4f}")
 
     return record

@@ -8,3 +8,4 @@ __pycache__/
 ai_model/model.pkl
 dataset/*.csv
 .ipynb_checkpoints/
+blockchain/chain.json

@@ -48,16 +48,16 @@ async def scan(duration: int = 10, verbose: bool = True):
         if verbose:
             print(f"[{record['timestamp']}] {record['mac']} | {record['name']:<20} | RSSI: {record['rssi']} dBm | Services: {record['service_count']}")
 
-    print(f"\n🔍 Scanning for BLE devices ({duration}s)...\n")
+    print(f"\n[SCAN] Scanning for BLE devices ({duration}s)...\n")
     scanner = BleakScanner(detection_callback=callback)
     await scanner.start()
     await asyncio.sleep(duration)
     await scanner.stop()
 
-    print(f"\n✅ Scan complete. {len(seen)} unique device(s) found.")
+    print(f"\n[OK] Scan complete. {len(seen)} unique device(s) found.")
     for record in seen.values():
         save_device(record)
-    print(f"💾 Data saved to: {os.path.abspath(DATASET_PATH)}\n")
+    print(f"[SAVE] Data saved to: {os.path.abspath(DATASET_PATH)}\n")
     return list(seen.values())
 
 if __name__ == '__main__':
