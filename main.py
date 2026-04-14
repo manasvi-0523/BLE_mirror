@@ -24,7 +24,7 @@ async def run_security_cycle(scanner, ai_model, blockchain, scan_duration=10):
         
     print(f"\n--- [PHASE 3 & 4] AI Detection & Blockchain Registry ---")
     
-    anomalies_this_cycle = 0
+    anomalies_detected = []
     for index, row in df.iterrows():
         fingerprint_row = pd.DataFrame([row])
         mac = row['mac_address']
@@ -44,7 +44,18 @@ async def run_security_cycle(scanner, ai_model, blockchain, scan_duration=10):
             # PHASE 5: Alerts
             score = ai_model.model.decision_function(fingerprint_row[ai_model.features])[0]
             trigger_alert(mac, name, score)
-            anomalies_this_cycle += 1
+            
+            # Categorize Criticality
+            criticality = "LOW"
+            if score < -0.2: criticality = "HIGH"
+            elif score < -0.1: criticality = "MEDIUM"
+            
+            anomalies_detected.append({
+                "mac": mac,
+                "name": name,
+                "score": score,
+                "criticality": criticality
+            })
         else:
             # Add to blockchain
             # Avoid re-adding if it's already in the chain
@@ -56,7 +67,7 @@ async def run_security_cycle(scanner, ai_model, blockchain, scan_duration=10):
                 
     print("\n[Cycle Complete] Next cycle starting in 5 seconds...")
     time.sleep(5)
-    return anomalies_this_cycle
+    return anomalies_detected
 
 async def main():
     print("==================================================")
@@ -79,14 +90,14 @@ async def main():
         
     # Main continuous loop
     # For prototype demo, we run it for 2 cycles
-    total_anomalies = 0
+    all_anomalies = []
     for cycle in range(2):
         print(f"\n>>>> SECURITY CYCLE: {cycle + 1}/2 <<<<")
         scanner = SignatureScanner() # fresh scanner
         
         cycle_anomalies = await run_security_cycle(scanner, ai_model, blockchain, scan_duration=10)
         if cycle_anomalies:
-            total_anomalies += cycle_anomalies
+            all_anomalies.extend(cycle_anomalies)
         
         # If AI wasn't trained because there was no data on boot, train it after cycle 1
         if not ai_model.is_trained:
@@ -103,16 +114,23 @@ async def main():
     if len(blockchain.chain) > 5:
         print("... [Truncated]")
 
-    print("\n╔════════════════════════════════════════════════╗")
-    print("║            FINAL SECURITY RESULT CORNER        ║")
-    print("╠════════════════════════════════════════════════╣")
-    if total_anomalies == 0:
-        print("║  OVERALL STATUS: SAFE [OK]                     ║")
-        print("║  All devices passed behavioral verification.   ║")
+    print("\n╔══════════════════════════════════════════════════╗")
+    print("║            FINAL SECURITY RESULT CORNER          ║")
+    print("╠══════════════════════════════════════════════════╣")
+    if not all_anomalies:
+        print("║  OVERALL STATUS: SAFE [OK]                       ║")
+        print("║  All devices passed behavioral verification.     ║")
     else:
-        print("║  OVERALL STATUS: NOT SAFE [CRITICAL]           ║")
-        print(f"║  WARNING: {total_anomalies} Anomalous device(s) intercepted!  ║")
-    print("╚════════════════════════════════════════════════╝\n")
+        print("║  OVERALL STATUS: NOT SAFE [CRITICAL]             ║")
+        print(f"║  Detected {len(all_anomalies)} Anomaly Event(s).                 ║")
+        print("╠══════════════════════════════════════════════════╣")
+        print("║  SPOOFING DEVICE LOG:                            ║")
+        # Ensure we don't print duplicates of the same device found in different cycles
+        unique_anomalies = {a['mac']: a for a in all_anomalies}.values()
+        for dev in unique_anomalies:
+            line = f"║  • {dev['name'][:10]} ({dev['mac']}) -> {dev['criticality']} ║"
+            print(line.ljust(51) + "║")
+    print("╚══════════════════════════════════════════════════╝\n")
 
 if __name__ == "__main__":
     # Remove older dataset if it exists to make demo extremely clean
