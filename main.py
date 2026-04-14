@@ -1,13 +1,108 @@
-from scanner.ble_scanner import SignatureScanner
 import asyncio
+import os
+import pandas as pd
+import time
+
+from scanner.ble_scanner import SignatureScanner
+from feature_engine.feature_extract import extract_features
+from ai_model.anomaly_detector import BehaviorAnomalyDetector
+from blockchain.blockchain import SimpleBlockchain
+from alerts.alert_system import trigger_alert
+
+async def run_security_cycle(scanner, ai_model, blockchain, scan_duration=10):
+    print("\n" + "#"*60)
+    print(f"--- [PHASE 1] Starting Data Capture Cycle ({scan_duration}s) ---")
+    await scanner.run(scan_time=scan_duration)
+    
+    print(f"\n--- [PHASE 2] Extracting Behavioral Features ---")
+    dataset_path = os.path.join(os.path.dirname(__file__), 'dataset', 'ble_data.csv')
+    df = extract_features(dataset_path)
+    
+    if df is None or df.empty:
+        print("Wait: No devices found in this cycle. Restarting...")
+        return
+        
+    print(f"\n--- [PHASE 3 & 4] AI Detection & Blockchain Registry ---")
+    for index, row in df.iterrows():
+        fingerprint_row = pd.DataFrame([row])
+        mac = row['mac_address']
+        name = row['name']
+        
+        # AI Detection
+        is_anomaly = ai_model.detect(fingerprint_row, name, mac)
+        
+        # Extract the behavioral blueprint dict
+        behavior_payload = {
+            "mean_rssi": row['mean_rssi'],
+            "mean_interval_ms": row['mean_interval'],
+            "packet_count": row['packet_count']
+        }
+        
+        if is_anomaly:
+            # PHASE 5: Alerts
+            score = ai_model.model.decision_function(fingerprint_row[ai_model.features])[0]
+            trigger_alert(mac, name, score)
+        else:
+            # Add to blockchain
+            # Avoid re-adding if it's already in the chain
+            existing = blockchain.get_device_history(mac)
+            if not existing:
+                blockchain.add_block(device_id=mac, behavior_data=behavior_payload)
+            else:
+                print(f"[Blockchain] Device {mac} already verified in ledger. Skipping.")
+                
+    print("\n[Cycle Complete] Next cycle starting in 5 seconds...")
+    time.sleep(5)
 
 async def main():
-    print("--- BLE Trust Registry: Main System ---")
-    # Step 1: Scan BLE Devices
-    scanner = SignatureScanner()
-    await scanner.run(scan_time=10)
+    print("==================================================")
+    print("      BLE DEVICE TRUST REGISTRY STARTING...       ")
+    print("==================================================")
     
-    # Next steps will integrate feature extraction, ML and Blockchain here
+    # Initialize Core Modules
+    blockchain = SimpleBlockchain()
+    ai_model = BehaviorAnomalyDetector(contamination=0.1)
+    dataset_path = os.path.join(os.path.dirname(__file__), 'dataset', 'ble_data.csv')
     
+    # We will use exactly one file to keep state within the demo lifecycle
+    # Pre-train the AI if possible
+    df_train = extract_features(dataset_path)
+    if df_train is not None:
+        ai_model.train(df_train)
+    else:
+        print("[WARNING] No previous dataset found. Real-time data will establish the baseline.")
+        # Without data, anomaly detection crashes. So we need to train on cycle 1.
+        
+    # Main continuous loop
+    # For prototype demo, we run it for 2 cycles
+    for cycle in range(2):
+        print(f"\n>>>> SECURITY CYCLE: {cycle + 1}/2 <<<<")
+        scanner = SignatureScanner() # fresh scanner
+        
+        await run_security_cycle(scanner, ai_model, blockchain, scan_duration=10)
+        
+        # If AI wasn't trained because there was no data on boot, train it after cycle 1
+        if not ai_model.is_trained:
+            df_train = extract_features(dataset_path)
+            if df_train is not None:
+               ai_model.train(df_train)
+        
+    print("\n==================================================")
+    print("      BLE TRUST REGISTRY DEMO COMPLETED           ")
+    print("==================================================")
+    print("\nFinal Blockchain Ledger:")
+    for b in blockchain.chain[:5]: # print first 5 to not spam the console
+        print(f"Block {b.index:2} | MAC {b.device_id[:17]:17} | Hash: {b.hash[:20]}...")
+    if len(blockchain.chain) > 5:
+        print("... [Truncated]")
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Remove older dataset if it exists to make demo extremely clean
+    dataset_path = os.path.join(os.path.dirname(__file__), 'dataset', 'ble_data.csv')
+    if os.path.exists(dataset_path):
+        os.remove(dataset_path)
+        
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n[System Guard] Process safely terminated by user.")
