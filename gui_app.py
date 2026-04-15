@@ -425,6 +425,9 @@ class BLESecurityApp(App):
         Builder.load_string(KV)
         Window.clearcolor = (0.05, 0.05, 0.07, 1)
         Window.size = (1080, 740)
+        icon_path = os.path.join(os.path.dirname(__file__), 'app_icon.ico')
+        if os.path.exists(icon_path):
+            Window.icon = icon_path
         Window.minimum_width = 900
         Window.minimum_height = 620
 

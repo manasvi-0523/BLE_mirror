@@ -24,6 +24,7 @@ a = Analysis(
         ('ai_model', 'ai_model'),
         ('blockchain', 'blockchain'),
         ('alerts', 'alerts'),
+        ('app_icon.ico', '.'),
     ],
     hiddenimports=[
         'sklearn.ensemble._iforest',
@@ -56,7 +57,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
-    icon=None,
+    icon='app_icon.ico',
 )
 
 coll = COLLECT(
