@@ -89,6 +89,7 @@ ble_claude/
 │           └── index.html       # Cybersecurity-themed dashboard UI
 ├── dataset/                     # Scan data + alert logs (gitignored)
 ├── main.py                      # Full pipeline entry point
+├── requirements.txt             # Python dependencies
 ├── .gitignore
 └── README.md
 ```
@@ -106,7 +107,7 @@ ble_claude/
 ### Install Dependencies
 
 ```bash
-pip install bleak scikit-learn pandas flask numpy
+pip install -r requirements.txt
 ```
 
 ### Run the Full Pipeline
@@ -116,13 +117,22 @@ python main.py
 ```
 
 This will:
-1. Scan for nearby BLE devices (15 seconds)
-2. Extract behavioral features
-3. Train an Isolation Forest model
-4. Register each device on the local blockchain
-5. Log alerts for anomalous devices
+1. Launch the Flask dashboard automatically on [http://localhost:5000](http://localhost:5000)
+2. Scan for nearby BLE devices (15 seconds)
+3. Extract behavioral features
+4. Train an Isolation Forest model
+5. Register each device on the local blockchain
+6. Log alerts for anomalous devices
 
-### Launch the Dashboard
+After the scan completes, the dashboard stays running — press **Ctrl+C** to stop it.
+
+To run **without** the dashboard:
+
+```bash
+python main.py --no-dashboard
+```
+
+### Launch the Dashboard Standalone
 
 ```bash
 cd ble-security-project/dashboard
