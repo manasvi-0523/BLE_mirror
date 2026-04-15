@@ -4,8 +4,6 @@
 
 A real-time **Bluetooth** device security system that combines **BLE + Classic Bluetooth scanning**, **AI-based anomaly detection** (Isolation Forest), and a **tamper-proof local blockchain** to identify, fingerprint, and flag rogue or spoofed devices in your environment.
 
-> **Live Dashboard** included — a cybersecurity-themed web interface for real-time monitoring.
-
 ---
 
 ## Architecture
@@ -34,10 +32,8 @@ A real-time **Bluetooth** device security system that combines **BLE + Classic B
                 │              │              │
                 └──────────────┼──────────────┘
                                │
-                    ┌──────────▼───────────┐
-                    │  Flask Web Dashboard  │
-                    │   Real-Time Charts    │
-                    └──────────────────────┘
+                               ▼
+                         [ Output / GUI ]
 ```
 
 ---
@@ -50,8 +46,9 @@ A real-time **Bluetooth** device security system that combines **BLE + Classic B
 - **AI Anomaly Detection** — Trains an Isolation Forest model to flag statistically anomalous devices
 - **Blockchain Identity Store** — Each device's behavioral hash is recorded on a local SHA-256 blockchain for tamper-proof audit
 - **Automated Alert System** — Anomalous devices trigger `BLOCK` actions, logged to `alerts.csv`
-- **Live Web Dashboard** — Cybersecurity-themed Flask dashboard with real-time charts, device tables, blockchain explorer, and alert logs
-
+- **Desktop GUI (Kivy)** — Professional dark-themed desktop app with metric cards, device table, and analytics tab
+- **Analytics Dashboard** — Built-in donut chart (device type distribution), RSSI signal bars, anomaly score chart, and live pipeline flow diagram
+- **One-click EXE Build** — GitHub Actions workflow auto-builds a Windows `.exe` on every push
 ---
 
 ## Tech Stack
@@ -64,8 +61,9 @@ A real-time **Bluetooth** device security system that combines **BLE + Classic B
 | AI Model             | Scikit-learn (Isolation Forest)         |
 | Blockchain           | Python SHA-256 simulation (local chain) |
 | Alert Logging        | CSV log + console output                |
-| Web Dashboard        | Flask + Chart.js                        |
-| Frontend Design      | Custom CSS (Orbitron, cyber-noir theme) |
+| Desktop GUI          | Kivy (pure-canvas charts, dark theme)   |
+| EXE Packaging        | PyInstaller (via GitHub Actions)        |
+
 
 ---
 
@@ -84,13 +82,13 @@ ble_claude/
 │   └── blockchain.py            # Local blockchain (SHA-256 chain)
 ├── alerts/
 │   └── alert_system.py          # Alert triggering + CSV logging
-├── ble-security-project/
-│   └── dashboard/
-│       ├── app.py               # Flask backend (REST APIs)
-│       └── templates/
-│           └── index.html       # Cybersecurity-themed dashboard UI
+├── .github/
+│   └── workflows/
+│       └── build-exe.yml        # GitHub Actions → Windows .exe
 ├── dataset/                     # Scan data + alert logs (gitignored)
-├── main.py                      # Full pipeline entry point
+├── main.py                      # CLI pipeline entry point
+├── gui_app.py                   # Kivy desktop GUI (Devices + Analytics)
+├── ble_security.spec            # PyInstaller build spec
 ├── requirements.txt             # Python dependencies
 ├── .gitignore
 └── README.md
@@ -119,29 +117,26 @@ python main.py
 ```
 
 This will:
-1. Launch the Flask dashboard automatically on [http://localhost:5000](http://localhost:5000)
-2. Scan for nearby BLE and Classic Bluetooth devices
-3. Extract behavioral features
-4. Train an Isolation Forest model
-5. Register each device on the local blockchain
-6. Log alerts for anomalous devices
+1. Scan for nearby BLE and Classic Bluetooth devices
+2. Extract behavioral features
+3. Train an Isolation Forest model
+4. Register each device on the local blockchain
+5. Log alerts for anomalous devices
 
-After the scan completes, the dashboard stays running — press **Ctrl+C** to stop it.
-
-To run **without** the dashboard:
+### Run the Desktop GUI
 
 ```bash
-python main.py --no-dashboard
+python gui_app.py
 ```
 
-### Launch the Dashboard Standalone
+The GUI features two tabs:
+- **DEVICES** — Real-time device table with status badges, anomaly scores, and RSSI
+- **ANALYTICS** — Donut chart (BLE/Classic/Threats), RSSI signal strength bars, anomaly score chart, and a live 4-stage pipeline flow diagram
 
-```bash
-cd ble-security-project/dashboard
-python app.py
-```
+### Download Pre-built EXE
 
-Open your browser at [http://localhost:5000](http://localhost:5000)
+A Windows `.exe` is automatically built on every push via GitHub Actions.  
+Go to **Actions → Build EXE → latest run → Artifacts** to download `BLE_Security_System`.
 
 ---
 
@@ -154,7 +149,7 @@ Open your browser at [http://localhost:5000](http://localhost:5000)
 | **3. Detect** | Anomaly detection | Isolation Forest flags statistically outlier devices |
 | **4. Record** | Blockchain logging | Each device's behavioral hash is stored on a SHA-256 chain |
 | **5. Alert** | Threat response | Anomalies trigger `BLOCK` action, logged to `alerts.csv` |
-| **6. Visualize** | Dashboard | Real-time charts, device table, blockchain explorer |
+
 
 ---
 
@@ -204,18 +199,6 @@ Open your browser at [http://localhost:5000](http://localhost:5000)
 
 ---
 
-## Dashboard Preview
-
-The web dashboard features a **cybersecurity-themed** dark interface with:
-- **Summary cards** — Total devices, scans, anomalies, normal, chain blocks
-- **RSSI Signal Trend** — Real-time line chart per device
-- **Anomaly Distribution** — Doughnut chart (Normal vs Anomaly)
-- **Detected Devices Table** — MAC, name, RSSI, services, payload, last seen
-- **Blockchain Explorer** — Visual chain with block index, device, and hash
-- **Alert Log** — Timestamped alerts with status badges and action labels
-
----
-
 ## Security & Privacy
 
 This project takes privacy seriously:
@@ -233,7 +216,8 @@ This project takes privacy seriously:
 - [x] Phase 2 — Feature Extraction (Behavioral Fingerprinting)
 - [x] Phase 3 — AI Anomaly Detection (Isolation Forest)
 - [x] Phase 4 — Blockchain Identity Store (SHA-256)
-- [x] Phase 5 — Web Dashboard (Flask + Chart.js)
+- [x] Phase 5 — Desktop GUI (Kivy + Analytics)
+- [x] Phase 5b — Automated EXE Build (GitHub Actions)
 - [ ] Phase 6 — Ethereum Smart Contract Integration
 - [ ] Phase 7 — Real-time Alerting (Email / SMS / Push)
 - [ ] Phase 8 — Multi-device collaborative scanning

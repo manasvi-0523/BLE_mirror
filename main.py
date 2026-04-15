@@ -6,7 +6,6 @@ Authors: manasvi-0523, Mithun Gowda B (@mithun50)
 """
 
 import asyncio
-import subprocess
 import sys
 import os
 
@@ -98,39 +97,5 @@ async def run():
     print("  Scan complete. Check dataset/alerts.csv for full log.")
     print("=" * 60)
 
-def launch_dashboard():
-    """Launch Flask dashboard as a background subprocess."""
-    dashboard_path = os.path.join(os.path.dirname(__file__), 'ble-security-project', 'dashboard', 'app.py')
-    if not os.path.exists(dashboard_path):
-        print(f"[ERROR] Dashboard not found at {dashboard_path}")
-        return None
-    print("\n[Dashboard] Starting Flask dashboard on http://localhost:5000 ...")
-    try:
-        proc = subprocess.Popen(
-            [sys.executable, dashboard_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        print(f"[Dashboard] Running (PID {proc.pid}). Open http://localhost:5000 in your browser.")
-        return proc
-    except OSError as e:
-        print(f"[ERROR] Failed to start dashboard: {e}")
-        return None
-
 if __name__ == '__main__':
-    no_dashboard = '--no-dashboard' in sys.argv
-
-    dashboard_proc = None
-    if not no_dashboard:
-        dashboard_proc = launch_dashboard()
-
-    try:
-        asyncio.run(run())
-    finally:
-        if dashboard_proc:
-            print("\n[Dashboard] Still running at http://localhost:5000 (press Ctrl+C to stop).")
-            try:
-                dashboard_proc.wait()
-            except KeyboardInterrupt:
-                dashboard_proc.terminate()
-                print("[Dashboard] Stopped.")
+    asyncio.run(run())

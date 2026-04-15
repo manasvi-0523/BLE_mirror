@@ -2,4 +2,7 @@ bleak
 scikit-learn
 pandas
 numpy
-flask
+kivy
+kivy_deps.sdl2e
+kivy_deps.glew
+kivy_deps.angle
