@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 os.environ['KIVY_LOG_LEVEL'] = 'error'
 os.environ['KCFG_KIVY_LOG_LEVEL'] = 'error'
+os.environ.setdefault('KIVY_GL_BACKEND', 'angle_sdl2')
 
 from kivy.app import App
 from kivy.clock import Clock
