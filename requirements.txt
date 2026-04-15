@@ -3,6 +3,6 @@ scikit-learn
 pandas
 numpy
 kivy
-kivy_deps.sdl2e
+kivy_deps.sdl2
 kivy_deps.glew
 kivy_deps.angle

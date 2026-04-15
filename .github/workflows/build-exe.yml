@@ -24,6 +24,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller
+        shell: pwsh
 
       - name: Build EXE with PyInstaller
         run: python -m PyInstaller ble_security.spec --noconfirm

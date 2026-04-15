@@ -5,7 +5,11 @@ Build with:  python -m PyInstaller ble_security.spec
 """
 
 import os
-from kivy_deps import sdl2, glew, angle
+try:
+    from kivy_deps import sdl2, glew, angle
+    kivy_dep_trees = [Tree(p) for p in (sdl2.dep_bins + glew.dep_bins + angle.dep_bins)]
+except ImportError:
+    kivy_dep_trees = []
 
 block_cipher = None
 BASE = os.path.abspath('.')
@@ -60,7 +64,7 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
-    *[Tree(p) for p in (sdl2.dep_bins + glew.dep_bins + angle.dep_bins)],
+    *kivy_dep_trees,
     strip=False,
     upx=True,
     upx_exclude=[],
