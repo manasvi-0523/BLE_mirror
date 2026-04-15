@@ -1,8 +1,8 @@
 # BLE Behavioral Fingerprinting Security System
 
-### AI + Blockchain Prototype | by [@manasvi-0523](https://github.com/manasvi-0523)
+### AI + Blockchain Prototype | by [@manasvi-0523](https://github.com/manasvi-0523) & [@mithun50](https://github.com/mithun50)
 
-A real-time **Bluetooth Low Energy (BLE)** device security system that combines **AI-based anomaly detection** (Isolation Forest) with a **tamper-proof local blockchain** to identify, fingerprint, and flag rogue or spoofed BLE devices in your environment.
+A real-time **Bluetooth** device security system that combines **BLE + Classic Bluetooth scanning**, **AI-based anomaly detection** (Isolation Forest), and a **tamper-proof local blockchain** to identify, fingerprint, and flag rogue or spoofed devices in your environment.
 
 > **Live Dashboard** included — a cybersecurity-themed web interface for real-time monitoring.
 
@@ -45,6 +45,7 @@ A real-time **Bluetooth Low Energy (BLE)** device security system that combines 
 ## Features
 
 - **Real-Time BLE Scanning** — Captures nearby BLE devices with MAC address, RSSI signal strength, advertised services, and payload size using `bleak`
+- **Classic Bluetooth Scanning** — Discovers nearby Classic Bluetooth devices (phones, speakers, laptops) via Windows PnP APIs with proper MAC address extraction
 - **Behavioral Fingerprinting** — Extracts a per-device feature vector (mean/std RSSI, payload stats, service count, scan frequency)
 - **AI Anomaly Detection** — Trains an Isolation Forest model to flag statistically anomalous devices
 - **Blockchain Identity Store** — Each device's behavioral hash is recorded on a local SHA-256 blockchain for tamper-proof audit
@@ -58,6 +59,7 @@ A real-time **Bluetooth Low Energy (BLE)** device security system that combines 
 | Layer                | Tool / Library                          |
 | -------------------- | --------------------------------------- |
 | BLE Scanning         | Python + [Bleak](https://github.com/hbldh/bleak) |
+| Classic BT Scanning  | PowerShell + Windows PnP APIs           |
 | Feature Engineering  | Pandas + NumPy                          |
 | AI Model             | Scikit-learn (Isolation Forest)         |
 | Blockchain           | Python SHA-256 simulation (local chain) |
@@ -72,7 +74,7 @@ A real-time **Bluetooth Low Energy (BLE)** device security system that combines 
 ```
 ble_claude/
 ├── scanner/
-│   └── ble_scanner.py           # BLE packet capture using Bleak
+│   └── ble_scanner.py           # BLE + Classic BT scanning
 ├── feature_engine/
 │   └── feature_extract.py       # Behavioral fingerprint extraction
 ├── ai_model/
@@ -118,7 +120,7 @@ python main.py
 
 This will:
 1. Launch the Flask dashboard automatically on [http://localhost:5000](http://localhost:5000)
-2. Scan for nearby BLE devices (15 seconds)
+2. Scan for nearby BLE and Classic Bluetooth devices
 3. Extract behavioral features
 4. Train an Isolation Forest model
 5. Register each device on the local blockchain
@@ -147,7 +149,7 @@ Open your browser at [http://localhost:5000](http://localhost:5000)
 
 | Phase | Action | Details |
 | ----- | ------ | ------- |
-| **1. Scan** | BLE discovery | Captures MAC, RSSI, services, payload size via `bleak` |
+| **1. Scan** | BLE + Classic BT discovery | BLE via `bleak`, Classic via Windows PnP API. MAC addresses extracted and formatted |
 | **2. Fingerprint** | Feature extraction | Computes mean/std RSSI, payload stats, service count per device |
 | **3. Detect** | Anomaly detection | Isolation Forest flags statistically outlier devices |
 | **4. Record** | Blockchain logging | Each device's behavioral hash is stored on a SHA-256 chain |
@@ -161,27 +163,36 @@ Open your browser at [http://localhost:5000](http://localhost:5000)
 ```
 ============================================================
   BLE SECURITY SYSTEM — AI + Blockchain Prototype
-  github: manasvi-0523
+  github: manasvi-0523 | mithun50
 ============================================================
 
-[Phase 1] BLE Scanning...
+[Phase 1] Bluetooth Scanning (BLE + Classic)...
+
+[SCAN] Starting Bluetooth scan (BLE + Classic)...
+
 [SCAN] Scanning for BLE devices (15s)...
-[OK] Scan complete. 12 unique device(s) found.
+
+[OK] BLE scan complete. 0 unique device(s) found.
+[SCAN] Discovering Classic Bluetooth devices...
+
+[2026-04-15T19:20:00.000] 2C:BE:EE:15:B9:B3 | Mithun's Phone       | CLASSIC
+[2026-04-15T19:20:00.001] 41:42:FF:2F:B2:8E | Rover 9              | CLASSIC
+
+[OK] Classic scan complete. 2 device(s) found.
+
+[OK] Total: 2 device(s) — 0 BLE, 2 Classic
 
 [Phase 2] Extracting behavioral features...
-[OK] Features extracted for 12 device(s).
+[OK] Features extracted for 2 device(s).
 
 [Phase 3] Training Isolation Forest model...
-[OK] Model trained on 12 device(s).
+[OK] Model trained on 2 device(s).
 
 [Phase 4] Registering devices on blockchain...
-[OK] Smart TV (AA:BB:CC:DD:EE:01) — NORMAL | Score: 0.0823
-
-[ALERT] ALERT TRIGGERED
-   Device  : Unknown (FF:FF:FF:FF:FF:FF)
-   Status  : ANOMALY
-   Score   : -0.1542
-   Action  : BLOCK
+[CHAIN] Block #1 added | Device: 2C:BE:EE:15:B9:B3 | Hash: d6af1d80...
+[OK] Mithun's Phone (2C:BE:EE:15:B9:B3) — NORMAL | Score: 0.0000
+[CHAIN] Block #2 added | Device: 41:42:FF:2F:B2:8E | Hash: 59a08b39...
+[OK] Rover 9 (41:42:FF:2F:B2:8E) — NORMAL | Score: 0.0000
 
 [Blockchain] Verifying chain integrity...
 [OK] Blockchain integrity verified.
@@ -218,6 +229,7 @@ This project takes privacy seriously:
 ## Roadmap
 
 - [x] Phase 1 — BLE Scanner (Bleak)
+- [x] Phase 1b — Classic Bluetooth Scanner (Windows PnP API)
 - [x] Phase 2 — Feature Extraction (Behavioral Fingerprinting)
 - [x] Phase 3 — AI Anomaly Detection (Isolation Forest)
 - [x] Phase 4 — Blockchain Identity Store (SHA-256)
@@ -236,5 +248,5 @@ This project is for educational and research purposes.
 
 <p align="center">
   <b>Built with Python, AI, and Blockchain</b><br>
-  <a href="https://github.com/manasvi-0523">@manasvi-0523</a>
+  <a href="https://github.com/manasvi-0523">@manasvi-0523</a> &middot; <a href="https://github.com/mithun50">@mithun50</a>
 </p>

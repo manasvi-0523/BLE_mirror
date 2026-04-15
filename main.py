@@ -2,7 +2,7 @@
 BLE Behavioral Fingerprinting Security System
 AI + Blockchain Prototype
 
-Author: manasvi-0523
+Authors: manasvi-0523, Mithun Gowda B (@mithun50)
 """
 
 import asyncio
@@ -24,12 +24,21 @@ SCAN_DURATION = 15  # seconds
 async def run():
     print("=" * 60)
     print("  BLE SECURITY SYSTEM — AI + Blockchain Prototype")
-    print("  github: manasvi-0523")
+    print("  github: manasvi-0523 | mithun50")
     print("=" * 60)
 
     # ── Phase 1: Scan ─────────────────────────────────────────
-    print("\n[Phase 1] BLE Scanning...")
-    devices = await scan(duration=SCAN_DURATION)
+    print("\n[Phase 1] Bluetooth Scanning (BLE + Classic)...")
+    try:
+        devices = await scan(duration=SCAN_DURATION)
+    except Exception as e:
+        err = str(e).lower()
+        if 'bluetooth' in err or 'not powered' in err or 'not available' in err:
+            print("[ERROR] Bluetooth is not available or powered off.")
+            print("        Turn on Bluetooth in Settings and try again.")
+        else:
+            print(f"[ERROR] BLE scan failed: {e}")
+        return
 
     if not devices:
         print("[WARN] No devices found. Make sure Bluetooth is enabled.")
@@ -37,7 +46,12 @@ async def run():
 
     # ── Phase 2: Feature Extraction ───────────────────────────
     print("[Phase 2] Extracting behavioral features...")
-    raw_df = load_data()
+    try:
+        raw_df = load_data()
+    except FileNotFoundError as e:
+        print(f"[ERROR] {e}")
+        return
+
     features_df = extract_features(raw_df)
     X = get_feature_matrix(features_df)
 
@@ -47,10 +61,13 @@ async def run():
 
     # ── Phase 3: AI Training + Prediction ─────────────────────
     print("[Phase 3] Training Isolation Forest model...")
-    model, scaler = train(X)
-
-    print("[Phase 3] Running anomaly detection...\n")
-    predictions, scores = predict(X, model, scaler)
+    try:
+        model, scaler = train(X)
+        print("[Phase 3] Running anomaly detection...\n")
+        predictions, scores = predict(X, model, scaler)
+    except Exception as e:
+        print(f"[ERROR] AI model failed: {e}")
+        return
 
     # ── Phase 4: Blockchain + Alerts ──────────────────────────
     print("[Phase 4] Registering devices on blockchain...\n")
@@ -63,16 +80,19 @@ async def run():
         pred = predictions[i]
         score = float(scores[i])
 
-        # Register on blockchain
-        bc.add_device(mac, feature_vector)
-
-        # Trigger alert
-        trigger(mac, name, pred, score)
+        try:
+            bc.add_device(mac, feature_vector)
+            trigger(mac, name, pred, score)
+        except Exception as e:
+            print(f"[ERROR] Failed to process device {mac}: {e}")
 
     # ── Verify Chain Integrity ────────────────────────────────
     print("\n[Blockchain] Verifying chain integrity...")
-    bc.verify_chain()
-    bc.print_chain()
+    try:
+        bc.verify_chain()
+        bc.print_chain()
+    except Exception as e:
+        print(f"[ERROR] Blockchain verification failed: {e}")
 
     print("\n" + "=" * 60)
     print("  Scan complete. Check dataset/alerts.csv for full log.")
@@ -81,14 +101,21 @@ async def run():
 def launch_dashboard():
     """Launch Flask dashboard as a background subprocess."""
     dashboard_path = os.path.join(os.path.dirname(__file__), 'ble-security-project', 'dashboard', 'app.py')
+    if not os.path.exists(dashboard_path):
+        print(f"[ERROR] Dashboard not found at {dashboard_path}")
+        return None
     print("\n[Dashboard] Starting Flask dashboard on http://localhost:5000 ...")
-    proc = subprocess.Popen(
-        [sys.executable, dashboard_path],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    print(f"[Dashboard] Running (PID {proc.pid}). Open http://localhost:5000 in your browser.")
-    return proc
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, dashboard_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        print(f"[Dashboard] Running (PID {proc.pid}). Open http://localhost:5000 in your browser.")
+        return proc
+    except OSError as e:
+        print(f"[ERROR] Failed to start dashboard: {e}")
+        return None
 
 if __name__ == '__main__':
     no_dashboard = '--no-dashboard' in sys.argv

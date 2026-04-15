@@ -1,6 +1,7 @@
 """
 BLE Security Dashboard — Flask Backend
-Author: manasvi-0523
+Authors: manasvi-0523, Mithun Gowda B (@mithun50)
+"""
 """
 
 from flask import Flask, jsonify, render_template

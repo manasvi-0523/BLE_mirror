@@ -4,12 +4,15 @@ import os
 
 DATASET_PATH = os.path.join(os.path.dirname(__file__), '..', 'dataset', 'ble_data.csv')
 
-FEATURE_COLS = ['rssi', 'interval_ms', 'payload_size', 'service_count']
+FEATURE_COLS = ['rssi', 'interval_ms', 'payload_size', 'service_count', 'scan_type']
 
 def load_data() -> pd.DataFrame:
     if not os.path.exists(DATASET_PATH):
         raise FileNotFoundError(f"No dataset found at {DATASET_PATH}. Run the scanner first.")
     df = pd.read_csv(DATASET_PATH)
+    # Backwards compatibility: add scan_type if missing (old CSV format)
+    if 'scan_type' not in df.columns:
+        df['scan_type'] = 'BLE'
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     return df
 
