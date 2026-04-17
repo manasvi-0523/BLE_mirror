@@ -38,7 +38,7 @@ from kivy.metrics import dp
 
 from scanner.ble_scanner import scan
 from scanner.distance import (estimate_distance, get_proximity_zone,
-                              format_distance, get_zone_color)
+                              format_distance_value, get_zone_color)
 from feature_engine.feature_extract import (load_data, extract_features,
                                             get_feature_matrix)
 from ai_model.anomaly_detector import train, predict, label
@@ -877,10 +877,7 @@ class BLESecurityApp(App):
         dist = estimate_distance(rssi)
         zone = get_proximity_zone(dist)
         z_color = get_zone_color(zone)
-        if dist is not None:
-            dist_text = f"~{dist*100:.0f}cm" if dist < 1 else (f"~{dist:.1f}m" if dist < 10 else f"~{dist:.0f}m")
-        else:
-            dist_text = "—"
+        dist_text = format_distance_value(dist)
         if self.empty_label.parent:
             self.table_grid.remove_widget(self.empty_label)
         is_anomaly = (pred == -1)

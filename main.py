@@ -13,7 +13,7 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from scanner.ble_scanner import scan
-from scanner.distance import format_distance
+
 from feature_engine.feature_extract import load_data, extract_features, get_feature_matrix
 from ai_model.anomaly_detector import train, predict, label
 from blockchain.blockchain import Blockchain

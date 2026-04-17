@@ -76,6 +76,19 @@ def get_zone_color(zone: str) -> list:
     }.get(zone, [0.5, 0.5, 0.58, 1])
 
 
+def format_distance_value(dist: float | None) -> str:
+    """Return formatted distance text like '~3.2m' without zone label."""
+    if dist is None:
+        return "—"
+
+    if dist < 1:
+        return f"~{dist * 100:.0f}cm"
+    elif dist < 10:
+        return f"~{dist:.1f}m"
+    else:
+        return f"~{dist:.0f}m"
+
+
 def format_distance(rssi: int | float) -> str:
     """Return a formatted distance string like '~3.2m (MEDIUM)'."""
     dist = estimate_distance(rssi)
@@ -84,12 +97,7 @@ def format_distance(rssi: int | float) -> str:
     if dist is None:
         return "—"
 
-    if dist < 1:
-        return f"~{dist * 100:.0f}cm ({zone})"
-    elif dist < 10:
-        return f"~{dist:.1f}m ({zone})"
-    else:
-        return f"~{dist:.0f}m ({zone})"
+    return f"{format_distance_value(dist)} ({zone})"
 
 
 if __name__ == '__main__':
