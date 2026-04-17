@@ -9,8 +9,6 @@ Where:
   n        = path loss exponent (2.0 = free space, 2.5-4.0 = indoor)
 """
 
-import math
-
 # ── Calibration Constants ─────────────────────────────────────
 # RSSI measured at exactly 1 meter from the transmitter
 RSSI_AT_1M = -59  # dBm  (typical BLE beacon reference)
