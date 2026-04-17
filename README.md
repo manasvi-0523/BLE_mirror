@@ -42,11 +42,12 @@ A real-time **Bluetooth** device security system that combines **BLE + Classic B
 
 - **Real-Time BLE Scanning** — Captures nearby BLE devices with MAC address, RSSI signal strength, advertised services, and payload size using `bleak`
 - **Classic Bluetooth Scanning** — Discovers nearby Classic Bluetooth devices (phones, speakers, laptops) via Windows PnP APIs with proper MAC address extraction
+- **RSSI Distance Estimation** — Converts signal strength to approximate distance (meters) using the log-distance path loss model, mapping devices to proximity zones (Near/Medium/Far)
 - **Behavioral Fingerprinting** — Extracts a per-device feature vector (mean/std RSSI, payload stats, service count, scan frequency)
 - **AI Anomaly Detection** — Trains an Isolation Forest model to flag statistically anomalous devices
 - **Blockchain Identity Store** — Each device's behavioral hash is recorded on a local SHA-256 blockchain for tamper-proof audit
 - **Automated Alert System** — Anomalous devices trigger `BLOCK` actions, logged to `alerts.csv`
-- **Desktop GUI (Kivy)** — Professional dark-themed desktop app with metric cards, device table, and analytics tab
+- **Desktop GUI (Kivy)** — Professional dark-themed desktop app with metric cards, distance tracking, device table, and analytics tab
 - **Analytics Dashboard** — Built-in donut chart (device type distribution), RSSI signal bars, anomaly score chart, and live pipeline flow diagram
 - **One-click EXE Build** — GitHub Actions workflow auto-builds a Windows `.exe` on every push
 ---
@@ -214,6 +215,7 @@ This project takes privacy seriously:
 - [x] Phase 1 — BLE Scanner (Bleak)
 - [x] Phase 1b — Classic Bluetooth Scanner (Windows PnP API)
 - [x] Phase 2 — Feature Extraction (Behavioral Fingerprinting)
+- [x] Phase 2b — RSSI Distance Estimation & Proximity Zones
 - [x] Phase 3 — AI Anomaly Detection (Isolation Forest)
 - [x] Phase 4 — Blockchain Identity Store (SHA-256)
 - [x] Phase 5 — Desktop GUI (Kivy + Analytics)

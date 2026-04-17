@@ -9,7 +9,7 @@ FEATURE_COLS = ['rssi', 'interval_ms', 'payload_size', 'service_count', 'scan_ty
 def load_data() -> pd.DataFrame:
     if not os.path.exists(DATASET_PATH):
         raise FileNotFoundError(f"No dataset found at {DATASET_PATH}. Run the scanner first.")
-    df = pd.read_csv(DATASET_PATH)
+    df = pd.read_csv(DATASET_PATH, encoding='utf-8')
     # Backwards compatibility: add scan_type if missing (old CSV format)
     if 'scan_type' not in df.columns:
         df['scan_type'] = 'BLE'
