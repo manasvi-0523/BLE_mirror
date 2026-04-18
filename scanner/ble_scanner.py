@@ -8,11 +8,9 @@ import sys
 from datetime import datetime
 from bleak import BleakScanner
 
-from scanner.distance import estimate_distance, get_proximity_zone, format_distance
-
 DATASET_PATH = os.path.join(os.path.dirname(__file__), '..', 'dataset', 'ble_data.csv')
 
-FIELDNAMES = ['timestamp', 'mac', 'name', 'rssi', 'interval_ms', 'payload_size', 'service_count', 'raw_services', 'scan_type', 'distance_m', 'proximity_zone']
+FIELDNAMES = ['timestamp', 'mac', 'name', 'rssi', 'interval_ms', 'payload_size', 'service_count', 'raw_services', 'scan_type']
 
 def ensure_dataset():
     os.makedirs(os.path.dirname(DATASET_PATH), exist_ok=True)
@@ -31,22 +29,17 @@ def parse_device(device, advertisement_data) -> dict:
     interval = getattr(advertisement_data, 'tx_power', None)
     payload = advertisement_data.manufacturer_data
     payload_size = sum(len(v) for v in payload.values()) if payload else 0
-    rssi = advertisement_data.rssi
-    dist = estimate_distance(rssi)
-    zone = get_proximity_zone(dist)
 
     return {
         'timestamp': datetime.now().isoformat(),
         'mac': device.address,
         'name': device.name or 'Unknown',
-        'rssi': rssi,
+        'rssi': advertisement_data.rssi,
         'interval_ms': interval if interval else -1,
         'payload_size': payload_size,
         'service_count': len(services),
         'raw_services': '|'.join(services),
-        'scan_type': 'BLE',
-        'distance_m': dist,
-        'proximity_zone': zone
+        'scan_type': 'BLE'
     }
 
 import re
@@ -124,9 +117,7 @@ def scan_classic(verbose: bool = True) -> list[dict]:
             'payload_size': 0,
             'service_count': 0,
             'raw_services': '',
-            'scan_type': 'CLASSIC',
-            'distance_m': None,
-            'proximity_zone': 'N/A'
+            'scan_type': 'CLASSIC'
         }
         records.append(record)
         if verbose:
@@ -145,8 +136,7 @@ async def scan_ble(duration: int = 10, verbose: bool = True) -> list[dict]:
         record = parse_device(device, advertisement_data)
         seen[device.address] = record
         if verbose:
-            dist_str = format_distance(record['rssi'])
-            print(f"[{record['timestamp']}] {record['mac']} | {record['name']:<20} | RSSI: {record['rssi']} dBm | {dist_str} | Services: {record['service_count']} | BLE")
+            print(f"[{record['timestamp']}] {record['mac']} | {record['name']:<20} | RSSI: {record['rssi']} dBm | Services: {record['service_count']} | BLE")
 
     print(f"[SCAN] Scanning for BLE devices ({duration}s)...\n")
     scanner = BleakScanner(detection_callback=callback)
