@@ -37,8 +37,6 @@ from kivy.graphics import (Color, Rectangle, RoundedRectangle,
 from kivy.metrics import dp
 
 from scanner.ble_scanner import scan
-from scanner.distance import (estimate_distance, get_proximity_zone,
-                              format_distance_value, get_zone_color)
 from feature_engine.feature_extract import (load_data, extract_features,
                                             get_feature_matrix)
 from ai_model.anomaly_detector import train, predict, label
@@ -117,7 +115,7 @@ KV = """
             color: root.dot_color
     BoxLayout:
         orientation: 'vertical'
-        size_hint_x: 0.28
+        size_hint_x: 0.32
         Label:
             text: root.name
             font_size: dp(13)
@@ -134,7 +132,7 @@ KV = """
             halign: 'left'
             text_size: self.width, None
     BoxLayout:
-        size_hint_x: 0.10
+        size_hint_x: 0.12
         Label:
             text: root.scan_type
             font_size: dp(10)
@@ -142,14 +140,14 @@ KV = """
             color: (0.2, 0.78, 0.85, 1) if root.scan_type == 'BLE' else (0.82, 0.7, 0.15, 1)
             halign: 'center'
     BoxLayout:
-        size_hint_x: 0.14
+        size_hint_x: 0.18
         Label:
             text: root.score_text
             font_size: dp(12)
             color: root.dot_color
             halign: 'center'
     BoxLayout:
-        size_hint_x: 0.14
+        size_hint_x: 0.16
         padding: dp(4), dp(8)
         canvas.before:
             Color:
@@ -165,25 +163,11 @@ KV = """
             color: root.badge_text
             halign: 'center'
     BoxLayout:
-        size_hint_x: 0.10
+        size_hint_x: 0.14
         Label:
             text: root.rssi_text
             font_size: dp(10)
             color: 0.5, 0.5, 0.58, 1
-            halign: 'center'
-    BoxLayout:
-        orientation: 'vertical'
-        size_hint_x: 0.14
-        Label:
-            text: root.distance_text
-            font_size: dp(11)
-            bold: True
-            color: root.zone_color
-            halign: 'center'
-        Label:
-            text: root.zone_text
-            font_size: dp(8)
-            color: root.zone_color
             halign: 'center'
 """
 
@@ -212,9 +196,6 @@ class DeviceEntry(BoxLayout):
     badge_bg = ListProperty([0.06, 0.15, 0.08, 1])
     badge_text = ListProperty([0, 0.85, 0.42, 1])
     rssi_text = StringProperty("—")
-    distance_text = StringProperty("—")
-    zone_text = StringProperty("")
-    zone_color = ListProperty([0.45, 0.45, 0.52, 1])
 
 
 # ──────────────────────────────────────────────────────────────
@@ -566,8 +547,8 @@ class BLESecurityApp(App):
         self.devices_view = BoxLayout(orientation='vertical', spacing=dp(4))
         col_hdr = BoxLayout(size_hint_y=None, height=dp(28),
                             padding=(dp(16), 0), spacing=dp(6))
-        hdrs = [("", 0.04), ("DEVICE", 0.28), ("TYPE", 0.10),
-                ("SCORE", 0.14), ("STATUS", 0.14), ("RSSI", 0.10), ("DISTANCE", 0.14)]
+        hdrs = [("", 0.04), ("DEVICE", 0.32), ("TYPE", 0.12),
+                ("SCORE", 0.18), ("STATUS", 0.16), ("RSSI", 0.14)]
         for txt, w in hdrs:
             h = Label(text=txt, font_size=dp(9), bold=True,
                       color=(0.35, 0.35, 0.42, 1),
@@ -873,11 +854,6 @@ class BLESecurityApp(App):
             name, mac, scan_type, score, pred, rssi), 0)
 
     def _do_add_device(self, name, mac, scan_type, score, pred, rssi):
-        # Compute distance from RSSI
-        dist = estimate_distance(rssi)
-        zone = get_proximity_zone(dist)
-        z_color = get_zone_color(zone)
-        dist_text = format_distance_value(dist)
         if self.empty_label.parent:
             self.table_grid.remove_widget(self.empty_label)
         is_anomaly = (pred == -1)
@@ -897,9 +873,6 @@ class BLESecurityApp(App):
             badge_text=([0.92, 0.22, 0.22, 1] if is_anomaly
                         else [0, 0.75, 0.38, 1]),
             rssi_text=f"{rssi} dBm" if rssi != -1 else "—",
-            distance_text=dist_text,
-            zone_text=zone,
-            zone_color=z_color,
         )
         self.table_grid.add_widget(entry)
 
