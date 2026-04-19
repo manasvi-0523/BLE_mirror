@@ -9,8 +9,12 @@ FEATURE_COLS = ['rssi', 'interval_ms', 'payload_size', 'service_count', 'scan_ty
 def load_data() -> pd.DataFrame:
     if not os.path.exists(DATASET_PATH):
         raise FileNotFoundError(f"No dataset found at {DATASET_PATH}. Run the scanner first.")
-    # Using on_bad_lines='skip' to prevent crashes if schema changes or data is malformed
-    df = pd.read_csv(DATASET_PATH, on_bad_lines='skip')
+    # Skip malformed rows while remaining compatible with older pandas versions
+    try:
+        df = pd.read_csv(DATASET_PATH, on_bad_lines='skip')
+    except TypeError:
+        # Fallback for pandas < 1.3.0
+        df = pd.read_csv(DATASET_PATH, error_bad_lines=False, warn_bad_lines=False)
     # Backwards compatibility: add scan_type if missing (old CSV format)
     if 'scan_type' not in df.columns:
         df['scan_type'] = 'BLE'
