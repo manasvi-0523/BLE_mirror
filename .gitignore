@@ -1,4 +1,7 @@
 .venv/
+venv_ble/
+ble_security/
+kivy_deps.*/
 __pycache__/
 *.pyc
 *.pyo
