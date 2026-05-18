@@ -9,3 +9,6 @@ ai_model/model.pkl
 dataset/*.csv
 .ipynb_checkpoints/
 blockchain/chain.json
+.env
+dataset/ble_registry.db
+ai_model/ocsvm.pkl

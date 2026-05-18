@@ -31,19 +31,26 @@ from kivy.uix.button import Button
 from kivy.uix.widget import Widget
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.progressbar import ProgressBar
+from kivy.uix.textinput import TextInput
 from kivy.animation import Animation
 from kivy.graphics import (Color, Rectangle, RoundedRectangle,
                             Line, Ellipse)
 from kivy.metrics import dp
 
-from scanner.ble_scanner import scan
+from scanner.ble_scanner import scan, detect_duplicate_macs
 from scanner.distance import (estimate_distance, get_proximity_zone,
                               format_distance_value, get_zone_color)
-from feature_engine.feature_extract import (load_data, extract_features,
-                                            get_feature_matrix)
-from ai_model.anomaly_detector import train, predict, label
+from db.registry import (init_db, get_db, upsert_device, build_training_matrix,
+                         check_spoofing, update_anomaly_result, get_registry_stats)
+from ai_model.anomaly_detector import (train, train_ocsvm, predict_ensemble,
+                                       normalize_risk, risk_label, label)
 from blockchain.blockchain import Blockchain
-from alerts.alert_system import trigger
+from blockchain.eth_registry import (
+    eth_is_trusted_batch, eth_log_anomaly, eth_enabled,
+)
+from alerts.alert_system import (
+    trigger, alert_unknown_device, alert_duplicate_mac, alert_cleared,
+)
 
 SCAN_DURATION = 15
 
@@ -149,7 +156,7 @@ KV = """
             color: root.dot_color
             halign: 'center'
     BoxLayout:
-        size_hint_x: 0.14
+        size_hint_x: 0.12
         padding: dp(4), dp(8)
         canvas.before:
             Color:
@@ -166,6 +173,22 @@ KV = """
             halign: 'center'
     BoxLayout:
         size_hint_x: 0.10
+        padding: dp(4), dp(8)
+        canvas.before:
+            Color:
+                rgba: root.risk_bg
+            RoundedRectangle:
+                pos: self.pos[0] + dp(4), self.pos[1] + dp(10)
+                size: self.width - dp(8), self.height - dp(20)
+                radius: [dp(4)]
+        Label:
+            text: root.risk_text
+            font_size: dp(9)
+            bold: True
+            color: root.risk_color
+            halign: 'center'
+    BoxLayout:
+        size_hint_x: 0.08
         Label:
             text: root.rssi_text
             font_size: dp(10)
@@ -173,7 +196,7 @@ KV = """
             halign: 'center'
     BoxLayout:
         orientation: 'vertical'
-        size_hint_x: 0.14
+        size_hint_x: 0.12
         Label:
             text: root.distance_text
             font_size: dp(11)
@@ -211,6 +234,9 @@ class DeviceEntry(BoxLayout):
     row_color = ListProperty([0.08, 0.08, 0.11, 1])
     badge_bg = ListProperty([0.06, 0.15, 0.08, 1])
     badge_text = ListProperty([0, 0.85, 0.42, 1])
+    risk_text = StringProperty("LOW")
+    risk_color = ListProperty([0, 0.85, 0.42, 1])
+    risk_bg = ListProperty([0.04, 0.14, 0.06, 1])
     rssi_text = StringProperty("—")
     distance_text = StringProperty("—")
     zone_text = StringProperty("")
@@ -554,8 +580,25 @@ class BLESecurityApp(App):
         self.tab_analytics_btn.bind(
             on_press=lambda *_: self._switch_tab('analytics'))
 
+        self.tab_admin_btn = Button(
+            text="ADMIN", font_size=dp(11), bold=True,
+            size_hint_x=0.14, background_normal='',
+            background_color=(0.1, 0.1, 0.14, 1),
+            color=(0.5, 0.5, 0.58, 1))
+        with self.tab_admin_btn.canvas.before:
+            Color(0.1, 0.1, 0.14, 1)
+            self._tad_bg = RoundedRectangle(
+                pos=self.tab_admin_btn.pos,
+                size=self.tab_admin_btn.size, radius=[dp(6)])
+        self.tab_admin_btn.bind(
+            pos=lambda w, p: setattr(self._tad_bg, 'pos', p),
+            size=lambda w, s: setattr(self._tad_bg, 'size', s))
+        self.tab_admin_btn.bind(
+            on_press=lambda *_: self._switch_tab('admin'))
+
         tab_row.add_widget(self.tab_devices_btn)
         tab_row.add_widget(self.tab_analytics_btn)
+        tab_row.add_widget(self.tab_admin_btn)
         tab_row.add_widget(Widget())
         root.add_widget(tab_row)
 
@@ -567,7 +610,8 @@ class BLESecurityApp(App):
         col_hdr = BoxLayout(size_hint_y=None, height=dp(28),
                             padding=(dp(16), 0), spacing=dp(6))
         hdrs = [("", 0.04), ("DEVICE", 0.28), ("TYPE", 0.10),
-                ("SCORE", 0.14), ("STATUS", 0.14), ("RSSI", 0.10), ("DISTANCE", 0.14)]
+                ("SCORE", 0.14), ("STATUS", 0.12), ("RISK", 0.10),
+                ("RSSI", 0.08), ("DISTANCE", 0.12)]
         for txt, w in hdrs:
             h = Label(text=txt, font_size=dp(9), bold=True,
                       color=(0.35, 0.35, 0.42, 1),
@@ -607,6 +651,9 @@ class BLESecurityApp(App):
 
         # --- Analytics view ---
         self.analytics_view = self._build_analytics_view()
+
+        # --- Admin view ---
+        self.admin_view = self._build_admin_view()
 
         self.content_area.add_widget(self.devices_view)
         self._current_tab = 'devices'
@@ -737,10 +784,10 @@ class BLESecurityApp(App):
         flow_card.add_widget(self.flow_diagram)
 
         self.flow_diagram.set_phases([
-            ("BT Scan", "pending", [0.3, 0.3, 0.38, 1]),
-            ("Features", "pending", [0.3, 0.3, 0.38, 1]),
-            ("AI Model", "pending", [0.3, 0.3, 0.38, 1]),
-            ("Blockchain", "pending", [0.3, 0.3, 0.38, 1]),
+            ("ETH Registry", "pending", [0.3, 0.3, 0.38, 1]),
+            ("Dup MAC",      "pending", [0.3, 0.3, 0.38, 1]),
+            ("AI Check",     "pending", [0.3, 0.3, 0.38, 1]),
+            ("CLEARED",      "pending", [0.3, 0.3, 0.38, 1]),
         ])
 
         bottom_row.add_widget(flow_card)
@@ -754,19 +801,437 @@ class BLESecurityApp(App):
         if tab == self._current_tab:
             return
         self.content_area.clear_widgets()
+
+        _inactive = (0.1, 0.1, 0.14, 1)
+        _inactive_text = (0.5, 0.5, 0.58, 1)
+        _active = (0.12, 0.52, 0.52, 1)
+        _active_text = (1, 1, 1, 1)
+
+        # Reset all tabs
+        for btn in (self.tab_devices_btn, self.tab_analytics_btn,
+                    self.tab_admin_btn):
+            btn.background_color = _inactive
+            btn.color = _inactive_text
+
         if tab == 'devices':
             self.content_area.add_widget(self.devices_view)
-            self.tab_devices_btn.background_color = (0.12, 0.52, 0.52, 1)
-            self.tab_devices_btn.color = (1, 1, 1, 1)
-            self.tab_analytics_btn.background_color = (0.1, 0.1, 0.14, 1)
-            self.tab_analytics_btn.color = (0.5, 0.5, 0.58, 1)
-        else:
+            self.tab_devices_btn.background_color = _active
+            self.tab_devices_btn.color = _active_text
+        elif tab == 'analytics':
             self.content_area.add_widget(self.analytics_view)
-            self.tab_analytics_btn.background_color = (0.12, 0.52, 0.52, 1)
-            self.tab_analytics_btn.color = (1, 1, 1, 1)
-            self.tab_devices_btn.background_color = (0.1, 0.1, 0.14, 1)
-            self.tab_devices_btn.color = (0.5, 0.5, 0.58, 1)
+            self.tab_analytics_btn.background_color = _active
+            self.tab_analytics_btn.color = _active_text
+        else:  # admin
+            self.content_area.add_widget(self.admin_view)
+            self.tab_admin_btn.background_color = (0.55, 0.22, 0.78, 1)
+            self.tab_admin_btn.color = _active_text
+            # Refresh ETH status every time admin tab is opened
+            Clock.schedule_once(lambda dt: self._admin_refresh_status(), 0.1)
+
         self._current_tab = tab
+
+    # ══════════════════════════════════════════════════════════
+    #  ADMIN TAB
+    # ══════════════════════════════════════════════════════════
+
+    def _build_admin_view(self):
+        """
+        Admin panel for on-chain device registry management.
+        Left column: ETH status + action buttons.
+        Right column: Form inputs + scrollable transaction log.
+        """
+        view = BoxLayout(orientation='horizontal', spacing=dp(12))
+
+        # ── LEFT COLUMN ───────────────────────────────────────
+        left = BoxLayout(orientation='vertical', spacing=dp(10),
+                         size_hint_x=0.36, padding=dp(4))
+
+        # ETH status card
+        status_card = BoxLayout(orientation='vertical', padding=dp(12),
+                                spacing=dp(6), size_hint_y=None, height=dp(180))
+        with status_card.canvas.before:
+            Color(0.07, 0.07, 0.1, 1)
+            self._asc_bg = RoundedRectangle(
+                pos=status_card.pos, size=status_card.size, radius=[dp(12)])
+        status_card.bind(
+            pos=lambda w, p: setattr(self._asc_bg, 'pos', p),
+            size=lambda w, s: setattr(self._asc_bg, 'size', s))
+
+        sc_title = Label(
+            text="[b]ETHEREUM STATUS[/b]", markup=True,
+            font_size=dp(10), color=(0.5, 0.5, 0.58, 1),
+            size_hint_y=None, height=dp(20), halign='left')
+        sc_title.bind(size=sc_title.setter('text_size'))
+        status_card.add_widget(sc_title)
+
+        self.eth_dot = Label(
+            text="● OFFLINE", font_size=dp(13), bold=True,
+            color=(0.6, 0.6, 0.68, 1),
+            size_hint_y=None, height=dp(24), halign='left')
+        self.eth_dot.bind(size=self.eth_dot.setter('text_size'))
+        status_card.add_widget(self.eth_dot)
+
+        self.eth_info = Label(
+            text="Set ETH_RPC_URL and\nCONTRACT_ADDRESS in .env",
+            font_size=dp(9), color=(0.4, 0.4, 0.48, 1),
+            halign='left', valign='top')
+        self.eth_info.bind(size=self.eth_info.setter('text_size'))
+        status_card.add_widget(self.eth_info)
+
+        refresh_btn = self._make_btn("REFRESH STATUS", (0.18, 0.18, 0.24, 1),
+                                     (0.7, 0.7, 0.78, 1), height=dp(32))
+        refresh_btn.bind(on_press=lambda *_: self._admin_refresh_status())
+        status_card.add_widget(refresh_btn)
+
+        left.add_widget(status_card)
+
+        # Action shortcut buttons
+        actions_title = Label(
+            text="[b]QUICK ACTIONS[/b]", markup=True,
+            font_size=dp(10), color=(0.5, 0.5, 0.58, 1),
+            size_hint_y=None, height=dp(24), halign='left')
+        actions_title.bind(size=actions_title.setter('text_size'))
+        left.add_widget(actions_title)
+
+        btn_data = [
+            ("REGISTER DEVICE",  (0.08, 0.36, 0.18, 1), (0, 0.85, 0.42, 1),  'register'),
+            ("REVOKE DEVICE",    (0.36, 0.08, 0.08, 1), (0.92, 0.22, 0.22, 1), 'revoke'),
+            ("CHECK DEVICE",     (0.06, 0.18, 0.36, 1), (0.18, 0.72, 0.92, 1), 'check'),
+        ]
+        for label_txt, bg, fg, mode in btn_data:
+            b = self._make_btn(label_txt, bg, fg)
+            b.bind(on_press=lambda *_, m=mode: self._admin_set_mode(m))
+            left.add_widget(b)
+
+        left.add_widget(Widget())  # spacer
+        view.add_widget(left)
+
+        # ── RIGHT COLUMN ──────────────────────────────────────
+        right = BoxLayout(orientation='vertical', spacing=dp(10))
+
+        # Form card
+        form_card = BoxLayout(orientation='vertical', padding=dp(14),
+                              spacing=dp(8), size_hint_y=None, height=dp(220))
+        with form_card.canvas.before:
+            Color(0.07, 0.07, 0.1, 1)
+            self._afc_bg = RoundedRectangle(
+                pos=form_card.pos, size=form_card.size, radius=[dp(12)])
+        form_card.bind(
+            pos=lambda w, p: setattr(self._afc_bg, 'pos', p),
+            size=lambda w, s: setattr(self._afc_bg, 'size', s))
+
+        self.admin_form_title = Label(
+            text="[b]REGISTER DEVICE[/b]", markup=True,
+            font_size=dp(11), color=(0, 0.85, 0.42, 1),
+            size_hint_y=None, height=dp(24), halign='left')
+        self.admin_form_title.bind(size=self.admin_form_title.setter('text_size'))
+        form_card.add_widget(self.admin_form_title)
+
+        # MAC input row
+        mac_row = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(8))
+        mac_lbl = Label(text="MAC Address", font_size=dp(10),
+                        color=(0.55, 0.55, 0.62, 1), size_hint_x=0.28,
+                        halign='right', valign='center')
+        mac_lbl.bind(size=mac_lbl.setter('text_size'))
+        self.admin_mac_input = TextInput(
+            hint_text="AA:BB:CC:DD:EE:FF",
+            font_size=dp(12), multiline=False,
+            background_color=(0.12, 0.12, 0.17, 1),
+            foreground_color=(0.92, 0.92, 0.95, 1),
+            cursor_color=(0, 0.85, 0.42, 1),
+            hint_text_color=(0.35, 0.35, 0.42, 1),
+            padding=(dp(8), dp(8)),
+            size_hint_x=0.72)
+        mac_row.add_widget(mac_lbl)
+        mac_row.add_widget(self.admin_mac_input)
+        form_card.add_widget(mac_row)
+
+        # Name input row (only shown for register)
+        name_row = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(8))
+        name_lbl = Label(text="Device Name", font_size=dp(10),
+                         color=(0.55, 0.55, 0.62, 1), size_hint_x=0.28,
+                         halign='right', valign='center')
+        name_lbl.bind(size=name_lbl.setter('text_size'))
+        self.admin_name_input = TextInput(
+            hint_text="e.g. My Laptop",
+            font_size=dp(12), multiline=False,
+            background_color=(0.12, 0.12, 0.17, 1),
+            foreground_color=(0.92, 0.92, 0.95, 1),
+            cursor_color=(0, 0.85, 0.42, 1),
+            hint_text_color=(0.35, 0.35, 0.42, 1),
+            padding=(dp(8), dp(8)),
+            size_hint_x=0.72)
+        name_row.add_widget(name_lbl)
+        name_row.add_widget(self.admin_name_input)
+        self.admin_name_row = name_row
+        form_card.add_widget(name_row)
+
+        # Submit button
+        self.admin_submit_btn = self._make_btn(
+            "REGISTER ON-CHAIN", (0.06, 0.28, 0.12, 1), (0, 0.85, 0.42, 1))
+        self.admin_submit_btn.bind(on_press=self._admin_submit)
+        form_card.add_widget(self.admin_submit_btn)
+
+        # Result label
+        self.admin_result = Label(
+            text="", font_size=dp(10), color=(0.5, 0.5, 0.58, 1),
+            halign='left', valign='top', text_size=(None, None))
+        self.admin_result.bind(size=self.admin_result.setter('text_size'))
+        form_card.add_widget(self.admin_result)
+
+        right.add_widget(form_card)
+
+        # Transaction log
+        log_card = BoxLayout(orientation='vertical', padding=dp(12),
+                             spacing=dp(6))
+        with log_card.canvas.before:
+            Color(0.07, 0.07, 0.1, 1)
+            self._alc_bg = RoundedRectangle(
+                pos=log_card.pos, size=log_card.size, radius=[dp(12)])
+        log_card.bind(
+            pos=lambda w, p: setattr(self._alc_bg, 'pos', p),
+            size=lambda w, s: setattr(self._alc_bg, 'size', s))
+
+        log_title = Label(
+            text="[b]TRANSACTION LOG[/b]", markup=True,
+            font_size=dp(10), color=(0.5, 0.5, 0.58, 1),
+            size_hint_y=None, height=dp(22), halign='left')
+        log_title.bind(size=log_title.setter('text_size'))
+        log_card.add_widget(log_title)
+
+        log_scroll = ScrollView(do_scroll_x=False, bar_width=dp(3),
+                                bar_color=(0.3, 0.3, 0.38, 0.5))
+        self.admin_log_grid = GridLayout(cols=1, spacing=dp(2),
+                                         size_hint_y=None, padding=dp(4))
+        self.admin_log_grid.bind(
+            minimum_height=self.admin_log_grid.setter('height'))
+        self._admin_log_append("[READY] Admin panel loaded. "
+                               "Connect Ethereum to enable on-chain actions.")
+        log_scroll.add_widget(self.admin_log_grid)
+        log_card.add_widget(log_scroll)
+
+        right.add_widget(log_card)
+        view.add_widget(right)
+
+        # Internal state
+        self._admin_mode = 'register'
+        return view
+
+    def _make_btn(self, text, bg, fg, height=dp(38)):
+        """Helper: create a styled rounded button."""
+        btn = Button(
+            text=text, font_size=dp(11), bold=True,
+            size_hint_y=None, height=height,
+            background_normal='', background_color=bg, color=fg)
+        with btn.canvas.before:
+            Color(*bg)
+            rr = RoundedRectangle(pos=btn.pos, size=btn.size, radius=[dp(7)])
+        btn.bind(
+            pos=lambda w, p, r=rr: setattr(r, 'pos', p),
+            size=lambda w, s, r=rr: setattr(r, 'size', s))
+        return btn
+
+    def _admin_log_append(self, msg: str, color=(0.55, 0.55, 0.62, 1)):
+        """Append a line to the transaction log (thread-safe via Clock)."""
+        def _do(dt):
+            from datetime import datetime
+            ts = datetime.now().strftime("%H:%M:%S")
+            lbl = Label(
+                text=f"[{ts}] {msg}",
+                font_size=dp(9), color=color,
+                halign='left', valign='top',
+                size_hint_y=None, height=dp(18))
+            lbl.bind(size=lbl.setter('text_size'))
+            self.admin_log_grid.add_widget(lbl)
+            # Auto-scroll to bottom
+            Clock.schedule_once(
+                lambda dt2: setattr(
+                    self.admin_log_grid.parent, 'scroll_y', 0), 0.05)
+        Clock.schedule_once(_do, 0)
+
+    def _admin_set_result(self, msg: str, ok: bool = True):
+        color = (0, 0.85, 0.42, 1) if ok else (0.92, 0.22, 0.22, 1)
+        Clock.schedule_once(
+            lambda dt: setattr(self.admin_result, 'color', color), 0)
+        Clock.schedule_once(
+            lambda dt: setattr(self.admin_result, 'text', msg), 0)
+
+    def _admin_set_mode(self, mode: str):
+        """Switch form between register / revoke / check modes."""
+        self._admin_mode = mode
+        titles = {
+            'register': ("[b]REGISTER DEVICE[/b]",
+                         "REGISTER ON-CHAIN", (0.06, 0.28, 0.12, 1),
+                         (0, 0.85, 0.42, 1), True),
+            'revoke':   ("[b]REVOKE DEVICE[/b]",
+                         "REVOKE ON-CHAIN", (0.28, 0.06, 0.06, 1),
+                         (0.92, 0.22, 0.22, 1), False),
+            'check':    ("[b]CHECK DEVICE[/b]",
+                         "CHECK TRUST STATUS", (0.06, 0.18, 0.28, 1),
+                         (0.18, 0.72, 0.92, 1), False),
+        }
+        title_txt, btn_txt, btn_bg, btn_fg, show_name = titles[mode]
+        self.admin_form_title.text = title_txt
+        self.admin_form_title.color = btn_fg
+        self.admin_submit_btn.text  = btn_txt
+        self.admin_submit_btn.background_color = btn_bg
+        self.admin_submit_btn.color = btn_fg
+        # Show/hide name field
+        if show_name and self.admin_name_row not in \
+                self.admin_name_row.parent.children:
+            pass  # already visible
+        self.admin_name_row.opacity = 1.0 if show_name else 0.0
+        self.admin_name_row.disabled = not show_name
+        self.admin_result.text = ""
+
+    def _admin_refresh_status(self):
+        """Fetch ETH status in background thread and update UI."""
+        import threading
+        threading.Thread(target=self._do_admin_refresh, daemon=True).start()
+
+    def _do_admin_refresh(self):
+        from blockchain.eth_registry import get_registry, eth_enabled
+        reg = get_registry()
+        if not reg.enabled:
+            Clock.schedule_once(lambda dt: setattr(
+                self.eth_dot, 'text', "● OFFLINE"), 0)
+            Clock.schedule_once(lambda dt: setattr(
+                self.eth_dot, 'color', (0.6, 0.6, 0.68, 1)), 0)
+            Clock.schedule_once(lambda dt: setattr(
+                self.eth_info, 'text',
+                "Set ETH_RPC_URL and\nCONTRACT_ADDRESS in .env\n"
+                "to enable Gate 1."), 0)
+            self._admin_log_append("[ETH] Status: OFFLINE", (0.6, 0.6, 0.68, 1))
+            return
+
+        try:
+            contract_addr = os.getenv('CONTRACT_ADDRESS', '')[:12] + '...'
+            count  = reg._contract.functions.deviceCount().call()
+            admin  = reg._contract.functions.admin().call()
+            signer = reg._account.address if reg._account else 'NOT SET'
+            is_admin = (reg._account and
+                        reg._account.address.lower() == admin.lower())
+
+            info = (f"Contract: {contract_addr}\n"
+                    f"Registered: {count} device(s)\n"
+                    f"Signer: {'ADMIN' if is_admin else 'READ-ONLY'}")
+            dot_text  = "● CONNECTED (Sepolia)"
+            dot_color = (0, 0.85, 0.42, 1)
+            log_msg   = (f"[ETH] Connected  Contract: {contract_addr}  "
+                         f"Devices: {count}  Signer: {'ADMIN' if is_admin else 'read-only'}")
+            if not is_admin:
+                info += "\n[WARN] Signer != admin, writes will revert"
+                log_msg += "  [WARN] write-only"
+
+            Clock.schedule_once(lambda dt: setattr(
+                self.eth_dot, 'text', dot_text), 0)
+            Clock.schedule_once(lambda dt: setattr(
+                self.eth_dot, 'color', dot_color), 0)
+            Clock.schedule_once(lambda dt: setattr(
+                self.eth_info, 'text', info), 0)
+            self._admin_log_append(log_msg, (0, 0.85, 0.42, 1))
+
+        except Exception as e:
+            self._admin_log_append(f"[ETH] Status error: {e}",
+                                   (0.92, 0.22, 0.22, 1))
+
+    def _admin_submit(self, *_):
+        """Run admin action in background thread."""
+        mac  = self.admin_mac_input.text.strip().upper()
+        name = self.admin_name_input.text.strip()
+        mode = self._admin_mode
+
+        if not mac:
+            self._admin_set_result("MAC address is required.", ok=False)
+            return
+        if mode == 'register' and not name:
+            self._admin_set_result("Device name is required.", ok=False)
+            return
+
+        self.admin_submit_btn.disabled = True
+        self._admin_set_result("Working...")
+
+        import threading
+        threading.Thread(
+            target=self._do_admin_action,
+            args=(mode, mac, name),
+            daemon=True).start()
+
+    def _do_admin_action(self, mode: str, mac: str, name: str):
+        from blockchain.eth_registry import get_registry
+        reg = get_registry()
+
+        if not reg.enabled:
+            self._admin_set_result(
+                "Ethereum not configured.\nSet ETH_RPC_URL + "
+                "CONTRACT_ADDRESS in .env", ok=False)
+            self._admin_log_append("[ETH] Action failed: not configured",
+                                   (0.92, 0.22, 0.22, 1))
+            Clock.schedule_once(
+                lambda dt: setattr(self.admin_submit_btn, 'disabled', False), 0)
+            return
+
+        try:
+            if mode == 'register':
+                tx = reg.register_device(mac, name)
+                if tx:
+                    short_tx = tx[:18] + '...'
+                    self._admin_set_result(
+                        f"Registered!\nTX: {short_tx}\n"
+                        f"View: sepolia.etherscan.io/tx/{tx}", ok=True)
+                    self._admin_log_append(
+                        f"[REGISTER] {mac} ({name}) TX: {short_tx}",
+                        (0, 0.85, 0.42, 1))
+                else:
+                    self._admin_set_result("Transaction failed. Check logs.",
+                                           ok=False)
+                    self._admin_log_append(
+                        f"[REGISTER] FAILED for {mac}", (0.92, 0.22, 0.22, 1))
+
+            elif mode == 'revoke':
+                tx = reg.revoke_device(mac)
+                if tx:
+                    short_tx = tx[:18] + '...'
+                    self._admin_set_result(
+                        f"Revoked!\nTX: {short_tx}", ok=True)
+                    self._admin_log_append(
+                        f"[REVOKE] {mac} TX: {short_tx}",
+                        (0.92, 0.72, 0.12, 1))
+                else:
+                    self._admin_set_result("Revoke failed. Check logs.",
+                                           ok=False)
+                    self._admin_log_append(
+                        f"[REVOKE] FAILED for {mac}", (0.92, 0.22, 0.22, 1))
+
+            elif mode == 'check':
+                trusted = reg.is_trusted(mac)
+                info    = reg.get_device(mac)
+                if info and info.get('registered_at'):
+                    from datetime import datetime
+                    ts = datetime.utcfromtimestamp(
+                        info['registered_at']).strftime('%Y-%m-%d %H:%M UTC')
+                    dev_name = info.get('name') or '(unnamed)'
+                    status_str = (
+                        f"{'TRUSTED' if trusted else 'REVOKED/UNKNOWN'}\n"
+                        f"Name: {dev_name}\n"
+                        f"Registered: {ts}")
+                else:
+                    status_str = ("NOT REGISTERED\n"
+                                  "This MAC is not in the on-chain registry.")
+                self._admin_set_result(status_str, ok=trusted)
+                color = ((0, 0.85, 0.42, 1) if trusted
+                         else (0.92, 0.22, 0.22, 1))
+                self._admin_log_append(
+                    f"[CHECK] {mac} -> "
+                    f"{'TRUSTED' if trusted else 'NOT TRUSTED'}", color)
+
+        except Exception as e:
+            self._admin_set_result(f"Error: {e}", ok=False)
+            self._admin_log_append(f"[ERROR] {mode} {mac}: {e}",
+                                   (0.92, 0.22, 0.22, 1))
+        finally:
+            Clock.schedule_once(
+                lambda dt: setattr(self.admin_submit_btn, 'disabled', False), 0)
 
     # ── UPDATE ANALYTICS ──────────────────────────────────────
 
@@ -775,16 +1240,16 @@ class BLESecurityApp(App):
         if not data:
             return
 
-        devices = data.get('devices', [])
-        scores = data.get('scores', [])
+        devices     = data.get('devices', [])
+        scores      = data.get('scores', [])
         predictions = data.get('predictions', [])
-        features_df = data.get('features_df', None)
+        risks       = data.get('risks', [])
+        names       = data.get('names', [])
+        macs        = data.get('macs', [])
 
-        ble_count = sum(1 for d in devices
-                        if d.get('scan_type') == 'BLE')
-        classic_count = sum(1 for d in devices
-                            if d.get('scan_type') == 'CLASSIC')
-        threat_count = sum(1 for p in predictions if p == -1)
+        ble_count     = sum(1 for d in devices if d.get('scan_type') == 'BLE')
+        classic_count = sum(1 for d in devices if d.get('scan_type') == 'CLASSIC')
+        threat_count  = int(sum(1 for p in predictions if p == -1))
 
         # Donut
         segments = []
@@ -794,47 +1259,41 @@ class BLESecurityApp(App):
             segments.append((classic_count, [0.85, 0.72, 0.12, 1]))
         if threat_count:
             segments.append((threat_count, [0.92, 0.22, 0.22, 1]))
-        self.donut_chart.set_data(
-            segments, str(len(devices)), "devices")
+        self.donut_chart.set_data(segments, str(len(devices)), "devices")
 
-        # RSSI bars
+        # RSSI bars (from raw scan devices)
         rssi_bars = []
         for d in devices[:10]:
-            name = (d.get('name') or d.get('mac', '??'))[:16]
-            rssi = d.get('rssi', -100)
-            if rssi > -50:
-                col = [0, 0.85, 0.42, 1]
-            elif rssi > -70:
-                col = [0.18, 0.72, 0.92, 1]
-            elif rssi > -85:
-                col = [0.85, 0.72, 0.12, 1]
-            else:
-                col = [0.92, 0.22, 0.22, 1]
-            rssi_bars.append((name, rssi, -30, col))
+            dname = (d.get('name') or d.get('mac', '??'))[:16]
+            rssi  = d.get('rssi', -100)
+            if rssi == -1:
+                continue
+            col = ([0, 0.85, 0.42, 1] if rssi > -50 else
+                   [0.18, 0.72, 0.92, 1] if rssi > -70 else
+                   [0.85, 0.72, 0.12, 1] if rssi > -85 else
+                   [0.92, 0.22, 0.22, 1])
+            rssi_bars.append((dname, rssi, -30, col))
         self.rssi_chart.set_data(rssi_bars, "SIGNAL STRENGTH (RSSI dBm)")
 
-        # Anomaly score bars
-        if features_df is not None and len(scores) > 0:
+        # Risk score bars (from registry ML results)
+        if len(scores) > 0 and len(names) > 0:
             score_bars = []
-            for i, row in features_df.iterrows():
-                if i >= len(scores):
-                    break
-                name = (row.get('device_name', '')
-                        or row.get('mac', '??'))[:16]
-                sc = float(scores[i])
-                pred = (predictions[i]
-                        if i < len(predictions) else 1)
-                col = ([0.92, 0.22, 0.22, 1] if pred == -1
-                       else [0, 0.85, 0.42, 1])
-                score_bars.append((name, sc, 1.0, col))
-            self.score_chart.set_data(score_bars[:10], "ANOMALY SCORES")
+            for i in range(min(len(names), len(scores), 10)):
+                dname = (names[i] or macs[i] if i < len(macs) else '??')[:16]
+                risk  = float(risks[i]) if i < len(risks) else 0.0
+                pred  = int(predictions[i]) if i < len(predictions) else 1
+                col   = ([0.92, 0.22, 0.22, 1] if pred == -1 else
+                         [0.92, 0.72, 0.12, 1] if risk >= 0.4 else
+                         [0, 0.85, 0.42, 1])
+                score_bars.append((dname, round(risk, 3), 1.0, col))
+            self.score_chart.set_data(score_bars, "RISK SCORES (0-1)")
 
-        # Pipeline flow — all done
+        # Pipeline flow - all done (matches paper Figure 5: 4 check gates)
         self.flow_diagram.set_phases([
-            ("BT Scan", "done", [0.18, 0.72, 0.92, 1]),
-            ("Features", "done", [0, 0.85, 0.42, 1]),
-            ("AI Model", "done", [0.85, 0.72, 0.12, 1]),
-            ("Blockchain", "done", [0.6, 0.42, 0.92, 1]),
+            ("ETH Registry", "done", [0.6, 0.42, 0.92, 1]),
+            ("Dup MAC",      "done", [0.92, 0.42, 0.12, 1]),
+            ("AI Check",     "done", [0.85, 0.72, 0.12, 1]),
+            ("CLEARED",      "done", [0, 0.85, 0.42, 1]),
         ])
 
     # ── UTILITIES ─────────────────────────────────────────────
@@ -868,19 +1327,30 @@ class BLESecurityApp(App):
         if sub:
             card.metric_sub = sub
 
-    def _add_device(self, name, mac, scan_type, score, pred, rssi):
+    def _add_device(self, name, mac, scan_type, score, pred, rssi, risk=0.0):
         Clock.schedule_once(lambda dt: self._do_add_device(
-            name, mac, scan_type, score, pred, rssi), 0)
+            name, mac, scan_type, score, pred, rssi, risk), 0)
 
-    def _do_add_device(self, name, mac, scan_type, score, pred, rssi):
-        # Compute distance from RSSI
-        dist = estimate_distance(rssi)
-        zone = get_proximity_zone(dist)
-        z_color = get_zone_color(zone)
+    def _do_add_device(self, name, mac, scan_type, score, pred, rssi, risk=0.0):
+        dist      = estimate_distance(rssi)
+        zone      = get_proximity_zone(dist)
+        z_color   = get_zone_color(zone)
         dist_text = format_distance_value(dist)
         if self.empty_label.parent:
             self.table_grid.remove_widget(self.empty_label)
         is_anomaly = (pred == -1)
+
+        rlabel = risk_label(risk)
+        if rlabel == "HIGH":
+            r_col = [0.92, 0.22, 0.22, 1]
+            r_bg  = [0.20, 0.06, 0.06, 1]
+        elif rlabel == "MEDIUM":
+            r_col = [0.92, 0.72, 0.12, 1]
+            r_bg  = [0.18, 0.14, 0.04, 1]
+        else:
+            r_col = [0, 0.85, 0.42, 1]
+            r_bg  = [0.04, 0.14, 0.06, 1]
+
         entry = DeviceEntry(
             name=name or "Unknown",
             mac=mac,
@@ -896,6 +1366,9 @@ class BLESecurityApp(App):
                       else [0.04, 0.14, 0.06, 1]),
             badge_text=([0.92, 0.22, 0.22, 1] if is_anomaly
                         else [0, 0.75, 0.38, 1]),
+            risk_text=rlabel,
+            risk_color=r_col,
+            risk_bg=r_bg,
             rssi_text=f"{rssi} dBm" if rssi != -1 else "—",
             distance_text=dist_text,
             zone_text=zone,
@@ -904,20 +1377,27 @@ class BLESecurityApp(App):
         self.table_grid.add_widget(entry)
 
     def _update_flow_phase(self, phase_idx, status):
-        """Update pipeline flow diagram during scan."""
+        """
+        Update pipeline flow diagram during scan.
+        4 gates matching paper Figure 5:
+          0 = ETH Registry Check (Gate 1)
+          1 = Duplicate MAC Detector (Gate 2)
+          2 = AI IsolationForest Check (Gate 3)
+          3 = Device CLEARED
+        """
         phases = [
-            ("BT Scan", "pending", [0.3, 0.3, 0.38, 1]),
-            ("Features", "pending", [0.3, 0.3, 0.38, 1]),
-            ("AI Model", "pending", [0.3, 0.3, 0.38, 1]),
-            ("Blockchain", "pending", [0.3, 0.3, 0.38, 1]),
+            ("ETH Registry", "pending", [0.3, 0.3, 0.38, 1]),
+            ("Dup MAC",      "pending", [0.3, 0.3, 0.38, 1]),
+            ("AI Check",     "pending", [0.3, 0.3, 0.38, 1]),
+            ("CLEARED",      "pending", [0.3, 0.3, 0.38, 1]),
         ]
         done_colors = [
-            [0.18, 0.72, 0.92, 1],
-            [0, 0.85, 0.42, 1],
-            [0.85, 0.72, 0.12, 1],
-            [0.6, 0.42, 0.92, 1],
+            [0.6, 0.42, 0.92, 1],   # ETH Registry - purple
+            [0.92, 0.42, 0.12, 1],  # Dup MAC - orange
+            [0.85, 0.72, 0.12, 1],  # AI Check - yellow
+            [0, 0.85, 0.42, 1],     # CLEARED - green
         ]
-        active_color = [0.92, 0.72, 0.12, 1]
+        active_color = [0.18, 0.72, 0.92, 1]
         for i in range(4):
             if i < phase_idx:
                 phases[i] = (phases[i][0], "done", done_colors[i])
@@ -950,10 +1430,10 @@ class BLESecurityApp(App):
 
         # Reset flow diagram
         self.flow_diagram.set_phases([
-            ("BT Scan", "pending", [0.3, 0.3, 0.38, 1]),
-            ("Features", "pending", [0.3, 0.3, 0.38, 1]),
-            ("AI Model", "pending", [0.3, 0.3, 0.38, 1]),
-            ("Blockchain", "pending", [0.3, 0.3, 0.38, 1]),
+            ("ETH Registry", "pending", [0.3, 0.3, 0.38, 1]),
+            ("Dup MAC",      "pending", [0.3, 0.3, 0.38, 1]),
+            ("AI Check",     "pending", [0.3, 0.3, 0.38, 1]),
+            ("CLEARED",      "pending", [0.3, 0.3, 0.38, 1]),
         ])
 
         thread = threading.Thread(target=self._pipeline, daemon=True)
@@ -989,11 +1469,21 @@ class BLESecurityApp(App):
             Clock.schedule_once(lambda dt: self._scan_finished(), 0)
 
     def _execute(self):
-        # Phase 1: Scan
-        self._set_phase(
-            "Phase 1/4 — Scanning nearby Bluetooth devices...", 10)
-        self._update_flow_phase(0, "active")
+        """
+        Defense-in-depth pipeline matching paper Figure 5:
+          Gate 1 - ETH Registry Check (PRIMARY - Blockchain Registry Check)
+          Gate 2 - Duplicate MAC Detector
+          Gate 3 - AI IsolationForest Check
+          Final  - Device CLEARED
+        """
+        import uuid as _uuid
+        import time as _t
+        t_start = _t.time()
+        session_id = str(_uuid.uuid4())
+        init_db()
 
+        # ── BLE + Classic Scan ─────────────────────────────────
+        self._set_phase("Scanning BLE + Classic Bluetooth...", 8)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -1002,147 +1492,198 @@ class BLESecurityApp(App):
         finally:
             loop.close()
 
-        ble_count = sum(1 for d in devices
-                        if d.get('scan_type') == 'BLE')
-        classic_count = sum(1 for d in devices
-                            if d.get('scan_type') == 'CLASSIC')
-        total = len(devices)
+        ble_devices   = [d for d in devices if d.get('scan_type') == 'BLE']
+        ble_count     = len(ble_devices)
+        classic_count = len(devices) - ble_count
+        total         = len(devices)
 
         self._set_metric(self.m_total, total,
-                         f"{ble_count} BLE · {classic_count} Classic")
+                         f"{ble_count} BLE  {classic_count} Classic")
         self._set_metric(self.m_ble, ble_count)
         self._set_metric(self.m_classic, classic_count)
-        self._set_phase(f"Phase 1/4 — Found {total} device(s)", 25)
-        self._update_flow_phase(0, "done")
 
         if not devices:
             self._set_status("NO DEVICES", [0.85, 0.72, 0.12, 1])
-            self._set_phase("No devices found — check Bluetooth", 0)
+            self._set_phase("No devices found - check Bluetooth", 0)
             Clock.schedule_once(lambda dt: setattr(
                 self.empty_label, 'text',
                 "No Bluetooth devices found.\n"
                 "Make sure Bluetooth is on and devices are nearby."), 0)
             self._scan_data = {'devices': devices}
-            Clock.schedule_once(
-                lambda dt: self._update_analytics(), 0.1)
+            Clock.schedule_once(lambda dt: self._update_analytics(), 0.1)
             return
 
-        # Phase 2: Feature Extraction
+        # ── Gate 1: ETH Registry Check ─────────────────────────
         self._set_phase(
-            "Phase 2/4 — Extracting behavioral fingerprints...", 40)
-        self._set_status("ANALYZING", [0.6, 0.42, 0.92, 1])
+            "Gate 1/3 — Blockchain Registry Check (Ethereum)...", 20)
+        self._set_status("ETH CHECK", [0.6, 0.42, 0.92, 1])
+        self._update_flow_phase(0, "active")
+
+        ble_macs = [d['mac'] for d in ble_devices]
+        trusted_map: dict = {}
+        unknown_ble: list = []
+
+        if eth_enabled() and ble_macs:
+            trusted_map = eth_is_trusted_batch(ble_macs)
+            unknown_ble = [m for m, ok in trusted_map.items() if not ok]
+        else:
+            trusted_map = {d['mac']: True for d in ble_devices}
+
+        self._set_phase(
+            f"Gate 1/3 — ETH: {len(ble_macs)-len(unknown_ble)} trusted, "
+            f"{len(unknown_ble)} unknown", 28)
+        self._update_flow_phase(0, "done")
+
+        # ── Gate 2: Duplicate MAC Detector ────────────────────
+        self._set_phase("Gate 2/3 — Duplicate MAC Detector...", 35)
+        self._set_status("DUP CHECK", [0.92, 0.42, 0.12, 1])
         self._update_flow_phase(1, "active")
 
-        try:
-            raw_df = load_data()
-        except FileNotFoundError:
-            self._set_phase("Error: dataset not found", 0)
-            return
+        dup_signals = detect_duplicate_macs(devices)
+        dup_macs    = {s['mac'] for s in dup_signals}
 
-        features_df = extract_features(raw_df)
-        X = get_feature_matrix(features_df)
         self._set_phase(
-            f"Phase 2/4 — {len(features_df)} fingerprint(s) extracted",
-            50)
+            f"Gate 2/3 — {len(dup_signals)} duplicate MAC signal(s)", 42)
         self._update_flow_phase(1, "done")
 
+        # ── Registry upsert + behavioral history ───────────────
+        self._set_phase("Updating behavioral registry...", 48)
+        self._set_status("ANALYZING", [0.3, 0.6, 0.92, 1])
+
+        spoofing_hits = len(dup_signals)
+        with get_db() as conn:
+            for record in devices:
+                fp_id   = upsert_device(conn, record, session_id)
+                signals = check_spoofing(conn, fp_id, record)
+                spoofing_hits += len([s for s in signals
+                                      if s['severity'] in ('WARN', 'ALERT')])
+
+            fp_ids, names, macs, X = build_training_matrix(conn)
+
         if len(X) < 2:
-            self._set_status("DONE", [0.85, 0.72, 0.12, 1])
+            self._set_status("BUILDING HISTORY", [0.85, 0.72, 0.12, 1])
             self._set_phase(
-                "Need 2+ devices for anomaly detection", 50)
-            Clock.schedule_once(
-                lambda dt: self.table_grid.clear_widgets(), 0)
-            for _, row in features_df.iterrows():
-                d = next((d for d in devices
-                          if d['mac'] == row['mac']), {})
-                self._add_device(
-                    row['device_name'], row['mac'],
-                    d.get('scan_type', '—'), -999, 1,
-                    d.get('rssi', -1))
-            self._scan_data = {
-                'devices': devices,
-                'features_df': features_df,
-                'scores': [], 'predictions': []}
-            Clock.schedule_once(
-                lambda dt: self._update_analytics(), 0.1)
+                f"Need 2+ devices with scan history "
+                f"({len(fp_ids)} so far - run more scans)", 50)
+            Clock.schedule_once(lambda dt: setattr(
+                self.empty_label, 'text',
+                "Building device history...\n"
+                "Run a few more scans so the AI has enough data.\n"
+                f"({total} devices seen this session)"), 0)
+            self._scan_data = {'devices': devices,
+                               'fp_ids': [], 'scores': [], 'predictions': []}
+            Clock.schedule_once(lambda dt: self._update_analytics(), 0.1)
             return
 
-        # Phase 3: AI Training
+        # ── Gate 3: AI IsolationForest Check ──────────────────
         self._set_phase(
-            "Phase 3/4 — Training Isolation Forest model...", 65)
+            f"Gate 3/3 — AI IsolationForest Check ({len(X)} devices)...", 62)
+        self._set_status("AI CHECK", [0.85, 0.72, 0.12, 1])
         self._update_flow_phase(2, "active")
+
         try:
             model, scaler_obj = train(X)
-            predictions, scores = predict(X, model, scaler_obj)
+            train_ocsvm(X)
+            predictions, scores = predict_ensemble(X, model, scaler_obj)
+            risks = normalize_risk(scores)
         except Exception as e:
             self._set_phase(f"AI model error: {e}", 0)
             return
-        self._set_phase(
-            "Phase 3/4 — Anomaly detection complete", 75)
+
+        self._set_phase("Gate 3/3 — AI ensemble complete", 72)
         self._update_flow_phase(2, "done")
 
-        # Phase 4: Blockchain + Alerts
-        self._set_phase(
-            "Phase 4/4 — Registering on blockchain...", 85)
+        # ── CLEARED + Blockchain ───────────────────────────────
+        self._set_phase("Registering on local blockchain...", 82)
         self._set_status("SECURING", [0.6, 0.42, 0.92, 1])
         self._update_flow_phase(3, "active")
-        bc = Blockchain()
-        anomaly_count = 0
 
-        Clock.schedule_once(
-            lambda dt: self.table_grid.clear_widgets(), 0)
+        bc            = Blockchain()
+        anomaly_count = 0
+        dev_lookup    = {d['mac']: d for d in devices}
+
+        Clock.schedule_once(lambda dt: self.table_grid.clear_widgets(), 0)
         _time.sleep(0.05)
 
-        for i, row in features_df.iterrows():
-            mac = row['mac']
-            name = row['device_name']
-            feature_vector = X[i].tolist()
-            pred = predictions[i]
-            score = float(scores[i])
+        with get_db() as conn:
+            for i, fp_id in enumerate(fp_ids):
+                mac        = macs[i]
+                name       = names[i]
+                pred       = int(predictions[i])
+                score      = float(scores[i])
+                risk       = float(risks[i])
+                rlabel     = risk_label(risk)
+                is_anomaly = pred == -1
+                not_listed = mac in unknown_ble
+                is_dup     = mac in dup_macs
 
-            try:
-                bc.add_device(mac, feature_vector)
-                trigger(mac, name, pred, score)
-            except Exception:
-                continue
+                reason_parts = []
+                if is_anomaly:
+                    reason_parts.append("IF+OCSVM both flagged")
+                if not_listed:
+                    reason_parts.append("not in ETH whitelist")
+                    if rlabel == 'LOW':
+                        rlabel = 'MEDIUM'
+                        risk   = max(risk, 0.4)
+                if is_dup:
+                    reason_parts.append("duplicate MAC (cloning)")
+                    rlabel = 'HIGH'
+                    risk   = max(risk, 0.7)
+                if not reason_parts:
+                    reason_parts.append("all gates passed")
+                reason = "; ".join(reason_parts)
 
-            if pred == -1:
-                anomaly_count += 1
+                try:
+                    bc.add_device(fp_id, X[i].tolist())
+                    trigger(mac, name, pred, score,
+                            risk_score=risk, reason=reason)
+                    update_anomaly_result(conn, fp_id, score, rlabel, is_anomaly)
+                    if (is_anomaly or not_listed or is_dup) and eth_enabled():
+                        eth_log_anomaly(mac, rlabel, reason)
+                except Exception:
+                    pass
 
-            d = next((d for d in devices if d['mac'] == mac), {})
-            self._add_device(name, mac, d.get('scan_type', '—'),
-                             score, pred, d.get('rssi', -1))
+                if is_anomaly:
+                    anomaly_count += 1
+
+                d = dev_lookup.get(mac, {})
+                self._add_device(name, mac, d.get('scan_type', '-'),
+                                 score, pred, d.get('rssi', -1), risk)
 
         self._set_metric(
             self.m_anomalies, anomaly_count,
-            "threat(s) detected" if anomaly_count else "all clear")
+            "threat(s)" if anomaly_count else "all clear")
 
-        # Verify chain
-        self._set_phase(
-            "Phase 4/4 — Verifying blockchain integrity...", 95)
         try:
             bc.verify_chain()
-            chain_len = len(bc.chain)
-            self._set_metric(self.m_chain, chain_len, "blocks verified")
+            self._set_metric(self.m_chain, len(bc.chain), "blocks")
         except Exception:
             pass
 
         self._update_flow_phase(3, "done")
 
-        # Done
-        self._set_phase("Scan complete", 100)
+        elapsed = _t.time() - t_start
+        self._set_phase(f"Scan complete in {elapsed:.1f}s", 100)
+
+        # Final status badge
+        total_flags = anomaly_count + len(unknown_ble) + len(dup_signals)
         if anomaly_count > 0:
-            self._set_status(
-                f"{anomaly_count} THREAT(S)", [0.92, 0.22, 0.22, 1])
+            self._set_status(f"{anomaly_count} AI THREAT(S)",
+                             [0.92, 0.22, 0.22, 1])
+        elif len(unknown_ble) > 0 or len(dup_signals) > 0:
+            self._set_status(f"{total_flags} FLAG(S)",
+                             [0.85, 0.72, 0.12, 1])
         else:
             self._set_status("ALL CLEAR", [0, 0.85, 0.42, 1])
 
-        # Store for analytics
         self._scan_data = {
-            'devices': devices,
-            'features_df': features_df,
-            'scores': scores,
+            'devices':     devices,
+            'fp_ids':      fp_ids,
+            'scores':      scores,
             'predictions': predictions,
+            'risks':       risks,
+            'names':       names,
+            'macs':        macs,
         }
         Clock.schedule_once(lambda dt: self._update_analytics(), 0.1)
 

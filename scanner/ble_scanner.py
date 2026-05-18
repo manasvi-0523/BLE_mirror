@@ -12,11 +12,20 @@ from scanner.distance import estimate_distance, get_proximity_zone, format_dista
 
 DATASET_PATH = os.path.join(os.path.dirname(__file__), '..', 'dataset', 'ble_data.csv')
 
-FIELDNAMES = ['timestamp', 'mac', 'name', 'rssi', 'interval_ms', 'payload_size', 'service_count', 'raw_services', 'scan_type', 'distance_m', 'proximity_zone']
+FIELDNAMES = ['timestamp', 'mac', 'name', 'rssi', 'tx_power', 'interval_ms', 'payload_size',
+              'service_count', 'raw_services', 'company_id', 'is_random_mac',
+              'scan_type', 'distance_m', 'proximity_zone']
 
 def ensure_dataset():
     os.makedirs(os.path.dirname(DATASET_PATH), exist_ok=True)
-    if not os.path.exists(DATASET_PATH):
+    needs_header = True
+    if os.path.exists(DATASET_PATH):
+        with open(DATASET_PATH, 'r', newline='') as f:
+            first_line = f.readline().strip()
+        # Rewrite header if the schema has changed
+        existing_cols = set(first_line.split(','))
+        needs_header = not existing_cols.issuperset({'tx_power', 'company_id', 'is_random_mac'})
+    if needs_header:
         with open(DATASET_PATH, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
             writer.writeheader()
@@ -28,22 +37,32 @@ def save_device(record: dict):
 
 def parse_device(device, advertisement_data) -> dict:
     services = advertisement_data.service_uuids or []
-    interval = getattr(advertisement_data, 'tx_power', None)
-    payload = advertisement_data.manufacturer_data
-    payload_size = sum(len(v) for v in payload.values()) if payload else 0
+    tx_power_val = getattr(advertisement_data, 'tx_power', None)
+    mfr = advertisement_data.manufacturer_data or {}
+    payload_size = sum(len(v) for v in mfr.values()) if mfr else 0
+    company_id = list(mfr.keys())[0] if mfr else -1
     rssi = advertisement_data.rssi
     dist = estimate_distance(rssi)
     zone = get_proximity_zone(dist)
+    # Locally administered bit (bit 1 of first byte) indicates a randomized MAC
+    try:
+        first_byte = int(device.address.split(':')[0], 16)
+        is_random = int(bool(first_byte & 0x02))
+    except (ValueError, IndexError):
+        is_random = 0
 
     return {
         'timestamp': datetime.now().isoformat(),
         'mac': device.address,
         'name': device.name or 'Unknown',
         'rssi': rssi,
-        'interval_ms': interval if interval else -1,
+        'tx_power': tx_power_val if tx_power_val is not None else -1,
+        'interval_ms': -1,
         'payload_size': payload_size,
         'service_count': len(services),
         'raw_services': '|'.join(services),
+        'company_id': company_id,
+        'is_random_mac': is_random,
         'scan_type': 'BLE',
         'distance_m': dist,
         'proximity_zone': zone
@@ -120,10 +139,13 @@ def scan_classic(verbose: bool = True) -> list[dict]:
             'mac': mac,
             'name': name,
             'rssi': -1,
+            'tx_power': -1,
             'interval_ms': -1,
             'payload_size': 0,
             'service_count': 0,
             'raw_services': '',
+            'company_id': -1,
+            'is_random_mac': 0,
             'scan_type': 'CLASSIC',
             'distance_m': None,
             'proximity_zone': 'N/A'
@@ -187,6 +209,48 @@ async def scan(duration: int = 10, verbose: bool = True) -> list[dict]:
     print(f"\n[OK] Total: {total} device(s) — {ble_count} BLE, {classic_count} Classic")
     print(f"[SAVE] Data saved to: {os.path.abspath(DATASET_PATH)}\n")
     return list(all_devices.values())
+
+# ── Duplicate MAC Detection ───────────────────────────────────
+# Paper section 3.2: same MAC appearing with two very different RSSI
+# values in a single scan cycle is a strong MAC spoofing indicator.
+
+_RSSI_SPOOF_THRESHOLD = 15  # dBm - difference that triggers a spoofing flag
+
+def detect_duplicate_macs(devices: list[dict]) -> list[dict]:
+    """
+    Scan the device list for duplicate MACs with anomalous RSSI spread.
+
+    Returns a list of spoofing signal dicts (same shape as check_spoofing()
+    output in db/registry.py) so they can be appended to spoofing_hits in
+    main.py without any special casing.
+
+    A duplicate MAC entry means two different physical devices are advertising
+    under the same address - a classic MAC spoofing / cloning attack.
+    """
+    from collections import defaultdict
+    mac_groups: dict[str, list[int]] = defaultdict(list)
+    for dev in devices:
+        if dev.get('scan_type') == 'BLE' and dev.get('rssi') not in (None, -1):
+            mac_groups[dev['mac']].append(int(dev['rssi']))
+
+    signals = []
+    for mac, rssi_list in mac_groups.items():
+        if len(rssi_list) < 2:
+            continue
+        rssi_range = max(rssi_list) - min(rssi_list)
+        if rssi_range >= _RSSI_SPOOF_THRESHOLD:
+            signals.append({
+                'mac': mac,
+                'type': 'DUPLICATE_MAC',
+                'detail': (
+                    f"MAC seen {len(rssi_list)} times with RSSI spread "
+                    f"{rssi_range} dBm ({min(rssi_list)} to {max(rssi_list)}) "
+                    "in one scan - possible MAC cloning"
+                ),
+                'severity': 'HIGH',
+            })
+    return signals
+
 
 if __name__ == '__main__':
     asyncio.run(scan(duration=15))
