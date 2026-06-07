@@ -5,19 +5,37 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![BLE Security](https://img.shields.io/badge/Security-BLE-green.svg)](https://github.com/manasvi-0523/BLE_TRUST-REGISTRY)
 
-A professional-grade security prototype designed to protect Bluetooth Low Energy (BLE) environments from spoofing and rogue device attacks. This system combines **Unsupervised Machine Learning** with an **Immutable Blockchain Ledger** to establish a "Behavioral Identity" for every device in range.
+A **production-grade** security system designed to protect Bluetooth Low Energy (BLE) environments from spoofing and rogue device attacks. This system combines **Unsupervised Machine Learning** with a **Tamper-Evident Blockchain Ledger** to establish a "Behavioral Identity" for every device in range.
+
+### 🆕 What's New in This Branch
+This `efficient-core-refactor` branch addresses critical bugs and introduces **scientifically sound** anomaly detection:
+
+✅ **Baseline/Monitor Mode Separation** - The biggest fix: no longer trains and tests on the same data  
+✅ **Dynamic Contamination Rate** - Adapts to dataset size for reliable detection  
+✅ **Blockchain Persistence** - Chain survives restarts with integrity validation  
+✅ **Resource Leak Fixes** - Proper file handle management  
+✅ **Real Interval Calculation** - Fixed bug where `tx_power` was used instead of actual time intervals  
+✅ **Centralized Configuration** - Clean architecture with `config.py`
 
 ---
 
 ## 🏛️ System Architecture
 
-The project is built on a 5-Phase engineering pipeline:
+The project follows a **scientifically rigorous 5-phase pipeline** with proper train/test separation:
 
-1.  **Phase 1: BLE Data Capture**: Asynchronous scanning of MAC addresses, RSSI (signal strength), and advertising intervals using the `Bleak` library.
-2.  **Phase 2: Feature Engineering**: Raw packet data is processed via `Pandas` into mathematical "Behavioral Fingerprints" (Mean Inter-arrival Times, RSSI stability, etc.).
-3.  **Phase 3: AI Anomaly Detection**: An **Isolation Forest** model learns the statistical boundaries of "normal" behavior and flags outliers with custom anomaly scores.
-4.  **Phase 4: Blockchain Trust Ledger**: Legitimate devices are cryptographically secured using SHA-256 hashing in a local peer-to-peer blockchain simulation.
-5.  **Phase 5: Real-time Alerting**: A security dashboard triggers visual alerts and blocks high-criticality threats from accessing the registry.
+1.  **Phase 1: BLE Data Capture**: Asynchronous scanning using `Bleak` library with proper interval calculation
+2.  **Phase 2: Feature Engineering**: Vectorized feature extraction via `Pandas` for behavioral fingerprints
+3.  **Phase 3: AI Anomaly Detection**: **Isolation Forest** with dynamic contamination rate and baseline learning
+4.  **Phase 4: Blockchain Trust Ledger**: Tamper-evident SHA-256 ledger with persistence and duplicate prevention
+5.  **Phase 5: Real-time Alerting**: Persistent alert logging with criticality classification
+
+### Key Architectural Improvements
+
+**Baseline/Monitor Separation** (The Critical Fix):
+- **Baseline Mode**: Scan trusted environment → train model → save to disk
+- **Monitor Mode**: Load trained model → scan current environment → detect anomalies
+
+This eliminates the fatal flaw of training and testing on the same data.
 
 ---
 
@@ -51,15 +69,62 @@ The project is built on a 5-Phase engineering pipeline:
 
 ## 💻 Usage
 
-Run the integrated master loop to start the security monitoring:
+### Baseline Mode - Learn Normal Behavior
+
+First, establish a baseline of trusted devices in a clean environment:
 
 ```powershell
-python main.py
+python main.py --mode baseline
 ```
 
-### What to expect:
-*   **Cycle 1 (Calibration)**: The system learns the environment and stores initial "Normal" devices into the blockchain.
-*   **Cycle 2+ (Active Defense)**: The AI model becomes active and begins blocking any device that exhibits irregular or aggressive behavior.
+This will:
+- Scan for devices over 2 cycles (configurable with `--cycles`)
+- Extract behavioral features
+- Train the AI model
+- Save the model to disk
+- Register all devices in the blockchain as trusted
+
+### Monitor Mode - Detect Anomalies
+
+Once baseline is established, activate real-time monitoring:
+
+```powershell
+python main.py --mode monitor
+```
+
+This will:
+- Load the pre-trained model
+- Scan for devices over 5 cycles (configurable)
+- Detect anomalies using the learned baseline
+- Trigger alerts for suspicious devices
+- Add normal devices to the blockchain
+
+### Custom Cycle Counts
+
+```powershell
+# Longer baseline learning (recommended for production)
+python main.py --mode baseline --cycles 5
+
+# Extended monitoring session
+python main.py --mode monitor --cycles 20
+```
+
+---
+
+## 🔬 What Makes This Scientifically Sound
+
+### ❌ Old Approach (Flawed)
+```
+Scan → Extract Features → Train Model → Predict on same scan
+```
+Problem: Model predicts on the exact data it was trained on. Meaningless results.
+
+### ✅ New Approach (Correct)
+```
+Baseline: Scan trusted environment → Train → Save model
+Monitor:  Load model → Scan current environment → Detect anomalies
+```
+Result: True anomaly detection with proper train/test separation.
 
 ---
 
@@ -80,14 +145,15 @@ At the end of each session, the system generates a **Security Result Corner** sh
 
 ```text
 BLE_TRUST-REGISTRY/
-├── scanner/             # Phase 1: Raw BLE scanning logic
-├── feature_engine/      # Phase 2: Data processing & Feature extraction
-├── ai_model/            # Phase 3: Isolation Forest ML model
-├── blockchain/          # Phase 4: SHA-256 Immutable Ledger logic
-├── alerts/              # Phase 5: Incident response & Alerting
-├── dataset/             # Temporary storage for behavioral CSVs
-├── main.py              # Master Integration Loop
-└── requirements.txt     # Python package definitions
+├── config.py            # Centralized configuration (NEW)
+├── scanner/             # Phase 1: BLE scanning with proper interval tracking
+├── feature_engine/      # Phase 2: Vectorized feature extraction
+├── ai_model/            # Phase 3: Isolation Forest with dynamic contamination
+├── blockchain/          # Phase 4: Persistent tamper-evident ledger
+├── alerts/              # Phase 5: Alert logging with history
+├── dataset/             # Temporary behavioral data storage
+├── main.py              # Baseline/Monitor mode orchestration
+└── requirements.txt     # Python dependencies
 ```
 
 ---
@@ -97,4 +163,17 @@ This project is for **ethical security research and educational purposes only**.
 
 ---
 
-**Developed with ❤️ by [manasvi-0523](https://github.com/manasvi-0523)**
+## 🐛 Bugs Fixed in This Branch
+
+1. **Interval calculation bug**: Was using `tx_power` instead of actual time difference
+2. **Resource leak**: Scanner file handle never closed properly
+3. **Train/test contamination**: Model was predicting on its own training data
+4. **Small dataset failure**: Model would fail or give meaningless results with <10 devices
+5. **Blockchain persistence**: Chain was lost on restart
+6. **Duplicate blocks**: Same device added repeatedly with unchanged behavior
+7. **Hard-coded paths**: All modules had scattered path definitions
+
+---
+
+**Developed with ❤️ by [manasvi-0523](https://github.com/manasvi-0523)**  
+**Refactored for production-grade quality**
