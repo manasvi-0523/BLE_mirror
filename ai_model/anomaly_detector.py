@@ -1,58 +1,127 @@
 import os
+import sys
 import joblib
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 
+# Add parent directory to path for imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import MODEL_PATH, FEATURES_FOR_MODEL, MIN_DEVICES_FOR_MODEL, CONTAMINATION_RATE, DYNAMIC_CONTAMINATION_THRESHOLD
+
 class BehaviorAnomalyDetector:
-    def __init__(self, contamination=0.1):
+    def __init__(self, contamination=None):
         """
-        contamination: The proportion of outliers in the data set. 
-        For a prototype, 0.1 (10%) is a good starting point to force anomaly detection on outliers.
-        """
-        self.model = IsolationForest(
-            n_estimators=100, 
-            contamination=contamination, 
-            random_state=42
-        )
-        # These are the mathematical parameters the AI looks at to decide if the behavior matches
-        self.features = ['mean_rssi', 'mean_interval', 'std_interval', 'packet_count', 'services_count']
-        self.is_trained = False
+        Initialize the Behavior Anomaly Detector with Isolation Forest.
         
-        self.model_dir = os.path.dirname(__file__)
-        self.model_path = os.path.join(self.model_dir, 'isolation_forest.pkl')
+        Args:
+            contamination: The proportion of outliers in the data set. 
+                          If None, uses config default or dynamic calculation.
+        """
+        self.base_contamination = contamination or CONTAMINATION_RATE
+        self.model = None
+        self.features = FEATURES_FOR_MODEL
+        self.is_trained = False
+        self.model_path = str(MODEL_PATH)
+        
+        # Ensure model directory exists
+        os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
+
+    def _calculate_dynamic_contamination(self, n_samples):
+        """
+        Calculate contamination rate dynamically based on sample size.
+        For small datasets, use a higher rate. For larger datasets, use configured rate.
+        
+        Args:
+            n_samples: Number of samples in the dataset
+            
+        Returns:
+            float: Contamination rate between 0.01 and 0.5
+        """
+        if n_samples < DYNAMIC_CONTAMINATION_THRESHOLD:
+            # For small datasets, use higher contamination to avoid overfitting
+            return min(0.3, max(0.1, 2.0 / n_samples))
+        else:
+            return self.base_contamination
 
     def train(self, features_df):
-        """Trains the model on baseline/normal behavioral features."""
-        if features_df is None or features_df.empty:
-            print("Cannot train: Dataset is empty.")
-            return False
+        """
+        Trains the model on baseline/normal behavioral features.
+        
+        Args:
+            features_df: DataFrame with behavioral features
             
-        print("\n[AI] Training Isolation Forest on baseline behavioral fingerprints...")
-        # Extract numerical features explicitly
+        Returns:
+            bool: True if training successful, False otherwise
+        """
+        if features_df is None or features_df.empty:
+            print("[AI] Cannot train: Dataset is empty.")
+            return False
+        
+        if len(features_df) < MIN_DEVICES_FOR_MODEL:
+            print(f"[AI] Warning: Only {len(features_df)} devices found. Minimum {MIN_DEVICES_FOR_MODEL} required for reliable model.")
+            print("[AI] Training anyway, but results may not be meaningful.")
+            
+        print(f"\n[AI] Training Isolation Forest on {len(features_df)} baseline behavioral fingerprints...")
+        
+        # Extract numerical features
         X = features_df[self.features]
+        
+        # Calculate appropriate contamination rate
+        contamination = self._calculate_dynamic_contamination(len(features_df))
+        print(f"[AI] Using contamination rate: {contamination:.3f} (dynamic adjustment for {len(features_df)} samples)")
+        
+        # Initialize and train model
+        self.model = IsolationForest(
+            n_estimators=100,
+            contamination=contamination,
+            random_state=42,
+            n_jobs=-1  # Use all CPU cores for faster training
+        )
         self.model.fit(X)
         self.is_trained = True
         
-        # Save model to disk so we don't have to retrain every boot
-        joblib.dump(self.model, self.model_path)
-        print(f"[AI] Model successfully trained & saved to {self.model_path}")
+        # Save model to disk
+        try:
+            joblib.dump(self.model, self.model_path)
+            print(f"[AI] Model successfully trained & saved to {self.model_path}")
+        except Exception as e:
+            print(f"[AI] Warning: Failed to save model: {e}")
+        
         return True
 
     def load_model(self):
-        """Loads a pre-trained model from disk."""
+        """
+        Loads a pre-trained model from disk.
+        
+        Returns:
+            bool: True if model loaded successfully, False otherwise
+        """
         if os.path.exists(self.model_path):
-            self.model = joblib.load(self.model_path)
-            self.is_trained = True
-            print("[AI] Successfully loaded pre-trained Isolation Forest model.")
-            return True
-        return False
+            try:
+                self.model = joblib.load(self.model_path)
+                self.is_trained = True
+                print(f"[AI] Successfully loaded pre-trained Isolation Forest model from {self.model_path}")
+                return True
+            except Exception as e:
+                print(f"[AI] Error loading model: {e}")
+                return False
+        else:
+            print(f"[AI] No pre-trained model found at {self.model_path}")
+            return False
 
     def detect(self, fingerprint_row, device_name, mac):
         """
         Takes a single device's fingerprint and determines if it is an anomaly.
-        Returns: True if ANOMALY, False if NORMAL
+        
+        Args:
+            fingerprint_row: DataFrame row with device behavioral features
+            device_name: Name of the device
+            mac: MAC address of the device
+            
+        Returns:
+            bool: True if ANOMALY, False if NORMAL, None if model not trained
         """
-        if not self.is_trained:
+        if not self.is_trained or self.model is None:
             print("[AI] Model is not trained. Cannot perform detection.")
             return None
             
@@ -61,7 +130,7 @@ class BehaviorAnomalyDetector:
         
         # Isolation Forest predicts: 1 for normal, -1 for anomaly
         prediction = self.model.predict(X_new)
-        # Decision function gives raw anomaly score (negative is bad)
+        # Decision function gives raw anomaly score (more negative = more anomalous)
         score = self.model.decision_function(X_new)[0]
         
         is_anomaly = (prediction[0] == -1)
@@ -70,22 +139,33 @@ class BehaviorAnomalyDetector:
         print(f"[{mac}] {device_name[:15]:15} -> {status} (Score: {score:.3f})")
         return is_anomaly
 
+    def get_anomaly_score(self, fingerprint_row):
+        """
+        Get the anomaly score for a device without classification.
+        
+        Args:
+            fingerprint_row: DataFrame row with device behavioral features
+            
+        Returns:
+            float: Anomaly score (more negative = more anomalous), or None if model not trained
+        """
+        if not self.is_trained or self.model is None:
+            return None
+            
+        X_new = fingerprint_row[self.features]
+        return self.model.decision_function(X_new)[0]
+
 if __name__ == "__main__":
-    import sys
-    # Add parent directory to path to import other modules
-    sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
     from feature_engine.feature_extract import extract_features
     
-    dataset_path = os.path.join(os.path.dirname(__file__), '..', 'dataset', 'ble_data.csv')
-    df = extract_features(dataset_path)
+    df = extract_features()
     
     if df is not None:
-        detector = BehaviorAnomalyDetector(contamination=0.2) # set 20% outlier to force a hit on small dataset
+        detector = BehaviorAnomalyDetector()
         detector.train(df)
         
         print("\n--- AI Model Inference Test ---")
-        # We test the model on the exact data it trained on.
-        # Since contamination is 0.2, it will mathematically FORCE the 20% most odd devices to be flagged as anomalies!
+        # Test the model on the training data to verify it works
         for index, row in df.iterrows():
             fingerprint_row = pd.DataFrame([row])
             detector.detect(fingerprint_row, row['name'], row['mac_address'])
