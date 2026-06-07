@@ -175,5 +175,5 @@ This project is for **ethical security research and educational purposes only**.
 
 ---
 
-**Developed with ❤️ by [manasvi-0523](https://github.com/manasvi-0523)**  
+**Developed  by NEXUS ONLINE**  
 **Refactored for production-grade quality**
