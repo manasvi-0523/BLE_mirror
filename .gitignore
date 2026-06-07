@@ -2,3 +2,19 @@ venv/
 __pycache__/
 *.pyc
 dataset/ble_data.csv
+dataset/*.csv
+alerts/*.csv
+blockchain/chain.json
+
+# AI Model artifacts (should be retrained per environment)
+ai_model/*.pkl
+ai_model/*.joblib
+
+# Environment variables
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
